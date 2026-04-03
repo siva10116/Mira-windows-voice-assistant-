@@ -1,0 +1,2 @@
+# Mira-windows-voice-assistant-
+Mira – Windows Voice Assistant Mira is a lightweight, customizable voice assistant built for Windows. It enables users to interact with their system through natural voice commands, offering features like speech recognition, text-to-speech output, and task automation. Designed with simplicity and extensibility in mind
