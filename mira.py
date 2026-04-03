@@ -1,5 +1,4 @@
-import speech_recognition as sr
-import sounddevice as sd
+
 import pyttsx3
 import keyboard
 import threading
@@ -13,6 +12,7 @@ import webbrowser
 from ytmusicapi import YTMusic
 import random
 import math
+import pywinstyles
 
 msg_queue = queue.Queue()
 text_command_queue = queue.Queue()
@@ -25,108 +25,153 @@ class MiraApp(ctk.CTk):
         super().__init__()
         
         self.title("Mira Assistant")
-        # Sleek wide, short geometry for Bottom-Center
-        self.width = 600
-        self.height = 220
+        # Classic Mac Siri dimensions (vertical panel)
+        self.width = 320
+        self.height = 600
         self.attributes('-topmost', True)
-        self.overrideredirect(True) # borderless to float seamlessly!
+        self.overrideredirect(True) # borderless
         
-        self.position_bottom_center()
-        self.configure(fg_color="#141414")
+        # We use a very dark grey to give Windows Acrylic something to blur without making it totally invisible
+        self.configure(fg_color="#121212")
         
-        # --- MINIMALIST TYPOGRAPHY ---
-        self.status_label = ctk.CTkLabel(self, text="What can I help you with?", font=("Inter", 24, "bold"), text_color="white")
-        self.status_label.pack(pady=(15, 5))
+        # Start completely hidden off-screen (top right, above the screen)
+        self.target_y = 40 # The resting Y position (just below menu bar)
+        self.current_y = -self.height - 100
+        self.x_pos = self.winfo_screenwidth() - self.width - 20 # 20px from right edge
         
-        # Replaces the chat log with dynamic phrase
-        self.live_transcript = ctk.CTkLabel(self, text="", font=("Inter", 16), text_color="gray80", wraplength=500, justify="center")
-        self.live_transcript.pack(pady=0)
+        self.geometry(f'{self.width}x{self.height}+{self.x_pos}+{self.current_y}')
+        
+        # Apply True Glassmorphism
+        try:
+            pywinstyles.apply_style(self, "acrylic")
+        except:
+            pass
 
-        # --- WAVEFORM VISUALS ---
-        self.canvas_bg = "#141414" 
-        self.wave_canvas = tk.Canvas(self, width=500, height=80, bg=self.canvas_bg, highlightthickness=0)
-        self.wave_canvas.pack(pady=(10, 0))
+        # Top Section: "Siri" prompt
+        self.status_label = ctk.CTkLabel(self, text="What can I help you with?", font=("Outfit", 20, "bold"), text_color="#ffffff", wraplength=280)
+        self.status_label.pack(pady=(40, 5), padx=20)
         
-        # Draw 3 overlapping smooth multipoint lines to mimic a neon glowing wave
-        self.num_points = 50
-        self.x_coords = [int(i * (500 / (self.num_points - 1))) for i in range(self.num_points)]
+        self.live_transcript = ctk.CTkLabel(self, text="", font=("Inter", 16), text_color="#a1a1aa", wraplength=280, justify="center")
+        self.live_transcript.pack(pady=10, padx=20)
+
+        # Mode Toggles & Sleek Entry - Moved higher up to leave bottom strictly for waves
+        self.input_container = ctk.CTkFrame(self, fg_color="transparent")
+        self.input_container.pack(fill="x", pady=20, padx=20)
+        
+        self.input_frame = ctk.CTkFrame(self.input_container, fg_color="transparent")
+        self.input_frame.pack(pady=0)
+        self.text_entry = ctk.CTkEntry(self.input_frame, width=220, height=35, placeholder_text="Ask Mira...", 
+                                       border_width=1, corner_radius=15, font=("Inter", 13), fg_color="#1f1f26")
+        self.text_entry.pack(side="left", padx=5)
+        self.text_entry.bind("<Return>", self.submit_text)
+        
+        self.enter_btn = ctk.CTkButton(self.input_frame, text="Ask", width=50, height=35, corner_radius=15, 
+                                       font=("Inter", 12, "bold"), command=self.submit_text)
+        self.enter_btn.pack(side="left")
+
+        # --- WAVEFORM VISUALS AT THE BOTTOM ---
+        self.canvas_bg = "#121212" 
+        self.wave_canvas = tk.Canvas(self, width=self.width, height=120, bg=self.canvas_bg, highlightthickness=0)
+        self.wave_canvas.pack(side="bottom", fill="x", pady=0) # Pinned to the hard bottom edge
+        
+        # Mac Siri precise colors: Cyan, Magenta, Green, Yellow, White Core
+        self.num_points = 60 
+        self.x_coords = [int(i * (self.width / (self.num_points - 1))) for i in range(self.num_points)]
         self.wave_lines = []
-        colors = ["#b32bc4", "#2b7fc4", "#ffffff"] # Purple, Blue, White Core
-        widths = [6, 4, 3] # Outer glow -> Inner hot core
+        
+        colors = ["#19AEE3", "#E52C9F", "#44C65D", "#F5AA25", "#ffffff"]
+        widths = [4, 4, 4, 3, 2] # Thinner, more intense strings of light
         
         for color, width in zip(colors, widths):
             coords = []
             for x in self.x_coords:
-                coords.extend([x, 40]) # initially flat at y=40
+                coords.extend([x, 60])
+            # Smooth bezier-like multipoint
             line_id = self.wave_canvas.create_line(*coords, fill=color, width=width, smooth=True, capstyle="round")
             self.wave_lines.append(line_id)
-
-        # Mode Toggles & Sleek Entry
-        self.bottom_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.bottom_frame.pack(side="bottom", pady=5, fill="x")
-        
-        self.mode_var = ctk.StringVar(value="Voice Mode")
-        # Keep toggle very small
-        self.mode_toggle = ctk.CTkSegmentedButton(self.bottom_frame, values=["Voice Mode", "Search Mode"], 
-                                                  variable=self.mode_var, command=self.switch_mode, height=20, font=("Inter", 10))
-        self.mode_toggle.pack(side="bottom")
-
-        # Hidden text entry structure for 'Search Mode'
-        self.input_frame = ctk.CTkFrame(self.bottom_frame, fg_color="transparent")
-        self.text_entry = ctk.CTkEntry(self.input_frame, width=300, placeholder_text="Type your command...", border_width=1, corner_radius=20)
-        self.text_entry.bind("<Return>", self.submit_text)
-        self.enter_btn = ctk.CTkButton(self.input_frame, text="↑", width=40, height=25, corner_radius=20, command=self.submit_text)
 
         self.animation_state = "Waiting"
         self.phase = 0.0
         
         self.session_active = False
+        self.is_visible = False
+        self.animating_slide = False
         
         self.check_queue()
-        self.update_wave() # Starts looping animation mathematically
+        self.update_wave()
         self.withdraw()
 
-    def position_bottom_center(self):
-        self.update_idletasks()
-        # Bottom center, floating heavily over taskbar like the Dribbble GIF
-        x = (self.winfo_screenwidth() // 2) - (self.width // 2)
-        y = self.winfo_screenheight() - self.height - 60 
-        self.geometry(f'{self.width}x{self.height}+{x}+{y}')
+    def slide_animation(self):
+        """Smooth ease-out sliding animation loop for the window."""
+        if not self.animating_slide:
+            return
+            
+        target = self.target_y if self.is_visible else -self.height - 50
+        diff = target - self.current_y
+        
+        if abs(diff) < 2:
+            self.current_y = target
+            self.geometry(f'{self.width}x{self.height}+{self.x_pos}+{int(self.current_y)}')
+            self.animating_slide = False
+            if not self.is_visible:
+                self.withdraw() # Hide it fully when off-screen
+            return
+            
+        # Ease out scaling
+        self.current_y += diff * 0.25 
+        self.geometry(f'{self.width}x{self.height}+{self.x_pos}+{int(self.current_y)}')
+        self.after(16, self.slide_animation) # 60fps sliding
+
+    def toggle_visibility(self):
+        if not self.is_visible:
+            self.deiconify()
+            self.attributes('-topmost', True)
+            self.is_visible = True
+            self.animating_slide = True
+            self.slide_animation()
+        else:
+            self.is_visible = False
+            self.animating_slide = True
+            self.slide_animation()
 
     def update_wave(self):
         """Continuous mathematical animation loop for the waveform."""
-        if self.session_active:
-            self.phase += 0.2
+        if self.session_active and self.is_visible:
+            self.phase += 0.12
             amplitude_mult = 1.0
             speed_mult = 1.0
             
             if self.animation_state == "Listening":
-                amplitude_mult = 28.0 # High spiky waves dynamically jumping
-                speed_mult = 2.0
+                amplitude_mult = 35.0
+                speed_mult = 2.2
             elif self.animation_state == "Processing":
-                amplitude_mult = 16.0 # Medium jittery processing lines
-                speed_mult = 3.0
+                amplitude_mult = 15.0
+                speed_mult = 3.5
             elif self.animation_state == "Waiting":
-                amplitude_mult = 2.0 # Flat breathing line
-                speed_mult = 0.5
+                amplitude_mult = 4.0
+                speed_mult = 0.8
             elif self.animation_state == "Quiet":
-                amplitude_mult = 0.0 # Pure dead flat line
+                amplitude_mult = 0.0 
                 
             for idx, line_id in enumerate(self.wave_lines):
                 new_coords = []
                 for i, x in enumerate(self.x_coords):
-                    # Bell curve envelope so center jumps highest, edges stay pinned to the canvas walls
+                    # Bell Curve
                     envelope = math.sin((i / (self.num_points - 1)) * math.pi)
                     
-                    # Generate sine wave turbulence across the line segments
-                    noise = math.sin(self.phase * speed_mult + (i * 0.5) + (idx * 0.3)) * random.uniform(0.8, 1.2)
-                    y = 40 + (noise * amplitude_mult * envelope)
+                    # Offsets to create crossing strands
+                    layer_offset = (idx * 1.5) 
+                    noise1 = math.sin(self.phase * speed_mult + (i * 0.15) + layer_offset) 
+                    noise2 = math.cos(self.phase * speed_mult * 0.7 + (i * 0.25))
+                    
+                    combined_noise = (noise1 + noise2) * 0.5 
+                    
+                    y = 60 + (combined_noise * amplitude_mult * envelope) # center at 60px height
                     new_coords.extend([x, y])
                     
                 self.wave_canvas.coords(line_id, *new_coords)
                 
-        # Loop at ultra-fast 40ms intervals (~25FPS) to keep animation liquid smooth
-        self.after(40, self.update_wave)
+        self.after(30, self.update_wave)
 
     def submit_text(self, event=None):
         cmd = self.text_entry.get().strip()
@@ -135,62 +180,54 @@ class MiraApp(ctk.CTk):
             self.live_transcript.configure(text=f'"{cmd}"')
             text_command_queue.put(cmd)
 
-    def switch_mode(self, new_mode):
-        if new_mode == "Search Mode":
-            self.mode_toggle.pack_forget() # hide mode toggle cleanly to make room
-            self.input_frame.pack(pady=0)
-            self.text_entry.pack(side="left", padx=5)
-            self.enter_btn.pack(side="left")
-            self.mode_toggle.pack(side="bottom", pady=5)
-            self.animation_state = "Quiet"
-            self.status_label.configure(text="Manual Search Mode")
-        else:
-            self.input_frame.pack_forget()
-            self.status_label.configure(text="What can I help you with?")
-            self.animation_state = "Waiting"
 
     def show_popup(self, title, link):
-        """Creates the iTunes style 'Now Playing' / Results pop up."""
+        """Creates an ultra premium 'Toast' style Result pop up sliding from right."""
         popup = ctk.CTkToplevel(self)
-        popup.title("Mira Link Result")
-        popup.geometry("450x120")
+        popup.title("Mira Notify")
+        popup.geometry("320x130")
         popup.attributes('-topmost', True)
-        popup.overrideredirect(True) # Frosted glass card style!
+        popup.overrideredirect(True) 
         
-        # Very dark gray, resembling glassy transparent dark cards
-        popup.configure(fg_color="#1a1a1a")
+        popup.configure(fg_color="#181818")
         
+        try:
+            pywinstyles.apply_style(popup, "acrylic")
+        except:
+            pass
+            
         popup.update_idletasks()
-        # Spawn EXACTLY ABOVE the main window center!
-        x = self.winfo_x() + (self.width // 2) - 225
-        y = self.winfo_y() - 130 # Spawn it perfectly floating above 10px in empty space
+        
+        # Spawn relative to the main Siri window
+        x = self.winfo_x() - 340 # Spawn to the left of the assistant panel
+        y = self.target_y # align with top
         popup.geometry(f"+{x}+{y}")
         
-        # Layout inside the pop-up panel
-        lbl = ctk.CTkLabel(popup, text=title, font=("Inter", 16, "bold"), wraplength=400)
-        lbl.pack(pady=(15, 5))
+        lbl = ctk.CTkLabel(popup, text=title, font=("Outfit", 16, "bold"), text_color="#ffffff", wraplength=280)
+        lbl.pack(pady=(15, 10), padx=10)
         
         btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
         btn_frame.pack()
         
-        btn = ctk.CTkButton(btn_frame, text="Open Result/Play", corner_radius=20, width=150, command=lambda: webbrowser.open(link))
-        btn.pack(side="left", padx=10)
+        btn = ctk.CTkButton(btn_frame, text="Open Link", corner_radius=15, width=120, height=30, 
+                            font=("Inter", 13, "bold"), command=lambda: webbrowser.open(link))
+        btn.pack(side="left", padx=5)
         
-        # We need a custom dismiss button since the normal application top-bar logic was purged
-        close_btn = ctk.CTkButton(btn_frame, text="Dismiss Card", width=100, fg_color="#333333", hover_color="#555555", corner_radius=20, command=popup.destroy)
-        close_btn.pack(side="left", padx=10)
+        close_btn = ctk.CTkButton(btn_frame, text="Dismiss", width=80, height=30, 
+                                  font=("Inter", 13), fg_color="#333333", hover_color="#555555", corner_radius=15, 
+                                  command=popup.destroy)
+        close_btn.pack(side="left", padx=5)
 
     def check_queue(self):
         try:
             while True:
                 msg = msg_queue.get_nowait()
                 if msg["type"] == "SHOW":
-                    self.deiconify()  
-                    self.attributes('-topmost', True) 
+                    if not self.is_visible:
+                        self.toggle_visibility()
                     self.live_transcript.configure(text="")
                     self.animation_state = "Waiting"
                 elif msg["type"] == "STATUS":
-                    # We hook animation states dynamically!
                     if "Listening" in msg["text"]:
                         self.animation_state = "Listening"
                     elif "Processing" in msg["text"]:
@@ -199,14 +236,14 @@ class MiraApp(ctk.CTk):
                         self.animation_state = "Waiting"
                 elif msg["type"] == "LOG":
                     clean_text = msg["text"].replace("Mira: ", "").replace("You (Voice): ", "").replace("You (Typed): ", "")
-                    # Wrap text and enclose in quotes Siri Dribbble-style
                     self.live_transcript.configure(text=f'"{clean_text}"')
                     if "Mira:" in msg["text"]:
-                        self.animation_state = "Listening" # Oscillate dynamically while talking
+                        self.animation_state = "Listening" 
                 elif msg["type"] == "POPUP":
                     self.show_popup(msg["title"], msg["link"])
                 elif msg["type"] == "HIDE":
-                    self.withdraw()
+                    if self.is_visible:
+                        self.toggle_visibility()
         except queue.Empty:
             pass
         finally:
@@ -237,7 +274,7 @@ def process_user_intent(command, app, speak):
                     watch_url = f"https://music.youtube.com/watch?v={video_id}"
                     
                     speak(f"Playing {title} by {artists}.")
-                    msg_queue.put({"type": "POPUP", "title": f"iTunes/YTM: {title} by {artists}", "link": watch_url})
+                    msg_queue.put({"type": "POPUP", "title": f"{title} — {artists}", "link": watch_url})
                     webbrowser.open(watch_url)
                 else:
                     speak("I couldn't find that exact song randomly.")
@@ -260,7 +297,6 @@ def process_user_intent(command, app, speak):
             else:
                 best_match = results[0]
                 page = wikipedia.page(best_match, auto_suggest=False)
-                # Spawn information window 
                 msg_queue.put({"type": "POPUP", "title": page.title, "link": page.url})
                 summary_text = wikipedia.summary(best_match, sentences=2, auto_suggest=False)
                 speak(f"From Wikipedia: {summary_text}")
@@ -288,80 +324,24 @@ def listen_and_process(app):
         engine.runAndWait()
 
     msg_queue.put({"type": "SHOW"})
-    mode = app.mode_var.get()
-    
-    recognizer = sr.Recognizer()
-    recognizer.energy_threshold = 150
-    recognizer.dynamic_energy_threshold = True
-    
-    conversation_started = False
-    wake_words = ["mira", "mirror", "mera", "meera", "myra"]
-    
     speak("Online.")
-    if mode == "Voice Mode":
-        msg_queue.put({"type": "STATUS", "text": "Waiting..."})
+    msg_queue.put({"type": "STATUS", "text": "Waiting..."})
     
     try:
-        with sr.Microphone() as source:
-            recognizer.adjust_for_ambient_noise(source, duration=0.5)
-            
-            while app.session_active:
-                try:
-                    typed_cmd = text_command_queue.get_nowait()
-                    msg_queue.put({"type": "LOG", "text": f"You (Typed): {typed_cmd}"})
-                    status = process_user_intent(typed_cmd.lower(), app, speak)
-                    if status == "EXIT":
-                        app.session_active = False
-                        break
-                    continue
-                except queue.Empty:
-                    pass
-
-                if app.mode_var.get() == "Search Mode":
-                    time.sleep(0.2)
-                    continue
-
-                msg_queue.put({"type": "STATUS", "text": "Listening..."})
-                try:
-                    audio = recognizer.listen(source, timeout=1.5, phrase_time_limit=10)
-                except sr.WaitTimeoutError:
-                    continue 
-
+        while app.session_active:
+            try:
+                typed_cmd = text_command_queue.get(timeout=0.2)
+                msg_queue.put({"type": "LOG", "text": f"You: {typed_cmd}"})
                 msg_queue.put({"type": "STATUS", "text": "Processing..."})
                 
-                try:
-                    command = recognizer.recognize_google(audio).lower()
-                    
-                    if not conversation_started:
-                        found_wake = False
-                        for w in wake_words:
-                            if w in command:
-                                found_wake = True
-                                command = command.replace(w, "").strip()
-                                break
-                                
-                        if found_wake:
-                            conversation_started = True
-                            if not command:
-                                msg_queue.put({"type": "LOG", "text": f"You (Voice): [Woke Up]"})
-                                speak("Yes?")
-                                continue 
-                        else:
-                            continue
-                            
-                    msg_queue.put({"type": "LOG", "text": f"You (Voice): {command}"})
-                    status = process_user_intent(command, app, speak)
-                    if status == "EXIT":
-                        app.session_active = False
-                        break
-                        
-                except sr.UnknownValueError:
-                    pass
-                except sr.RequestError as e:
-                    msg_queue.put({"type": "STATUS", "text": "Service offline."})
-                    speak("Voice service offline.")
+                status = process_user_intent(typed_cmd.lower(), app, speak)
+                if status == "EXIT":
                     app.session_active = False
                     break
+                    
+                msg_queue.put({"type": "STATUS", "text": "Waiting..."})
+            except queue.Empty:
+                pass
                     
     except Exception as e:
         msg_queue.put({"type": "STATUS", "text": "Error."})
@@ -377,6 +357,7 @@ def on_hotkey_pressed(app):
         threading.Thread(target=listen_and_process, args=(app,), daemon=True).start()
     else:
         app.session_active = False
+        msg_queue.put({"type": "HIDE"}) # explicitly queue a hide command immediately
 
 def main():
     print("Mira Background GUI Service Started.")
