@@ -1,7 +1,9 @@
 @echo off
-echo Starting Mira Backend...
-start /b uvicorn backend.main:app --host 127.0.0.1 --port 8000
+echo Starting Mira Voice Assistant...
 
-echo Starting Mira UI...
-cd frontend
-npm start
+:: Set the Gemini API Key here as an environment variable
+set GEMINI_API_KEY=AIzaSyCJMo4e87F3-P374JoE23gYiI0o_H97n30
+
+:: Run the desktop UI natively
+C:/Users/seera/AppData/Local/Programs/Python/Python311/python.exe mira.py
+pause
