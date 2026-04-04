@@ -1,4 +1,4 @@
-
+# lllll
 import pyttsx3
 import keyboard
 import threading
@@ -7,12 +7,19 @@ import queue
 import customtkinter as ctk
 import tkinter as tk
 import pythoncom
-import wikipedia
 import webbrowser
 from ytmusicapi import YTMusic
 import random
 import math
 import pywinstyles
+import os
+from google import genai
+
+# Setup Gemini API (Replace the string or use environment variable)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyCJMo4e87F3-P374JoE23gYiI0o_H97n30")
+gemini_client = None
+if GEMINI_API_KEY:
+    gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 msg_queue = queue.Queue()
 text_command_queue = queue.Queue()
@@ -25,73 +32,111 @@ class MiraApp(ctk.CTk):
         super().__init__()
         
         self.title("Mira Assistant")
-        # Classic Mac Siri dimensions (vertical panel)
-        self.width = 320
-        self.height = 600
+        self.width = 560
+        self.height = 190
         self.attributes('-topmost', True)
-        self.overrideredirect(True) # borderless
+        self.overrideredirect(True)
+        self.configure(fg_color="#18181A")
         
-        # We use a very dark grey to give Windows Acrylic something to blur without making it totally invisible
-        self.configure(fg_color="#121212")
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
         
-        # Start completely hidden off-screen (top right, above the screen)
-        self.target_y = 40 # The resting Y position (just below menu bar)
-        self.current_y = -self.height - 100
-        self.x_pos = self.winfo_screenwidth() - self.width - 20 # 20px from right edge
+        self.x_pos = (screen_width - self.width) // 2
+        self.target_y = screen_height - self.height - 80 
+        self.hidden_y = screen_height + 50
         
+        self.current_y = self.hidden_y
         self.geometry(f'{self.width}x{self.height}+{self.x_pos}+{self.current_y}')
         
-        # Apply True Glassmorphism
         try:
-            pywinstyles.apply_style(self, "acrylic")
+            import pywinstyles
+            pywinstyles.apply_style(self, "transparent")
         except:
             pass
 
-        # Top Section: "Siri" prompt
-        self.status_label = ctk.CTkLabel(self, text="What can I help you with?", font=("Outfit", 20, "bold"), text_color="#ffffff", wraplength=280)
-        self.status_label.pack(pady=(40, 5), padx=20)
+        self.border_frame = ctk.CTkFrame(self, fg_color="transparent", border_width=1, border_color="#333333", corner_radius=15)
+        self.border_frame.pack(fill="both", expand=True, padx=2, pady=2)
         
-        self.live_transcript = ctk.CTkLabel(self, text="", font=("Inter", 16), text_color="#a1a1aa", wraplength=280, justify="center")
-        self.live_transcript.pack(pady=10, padx=20)
+        self.main_content = ctk.CTkFrame(self.border_frame, fg_color="transparent", corner_radius=14)
+        self.main_content.pack(fill="both", expand=True, padx=1, pady=1)
 
-        # Mode Toggles & Sleek Entry - Moved higher up to leave bottom strictly for waves
-        self.input_container = ctk.CTkFrame(self, fg_color="transparent")
-        self.input_container.pack(fill="x", pady=20, padx=20)
-        
-        self.input_frame = ctk.CTkFrame(self.input_container, fg_color="transparent")
-        self.input_frame.pack(pady=0)
-        self.text_entry = ctk.CTkEntry(self.input_frame, width=220, height=35, placeholder_text="Ask Mira...", 
-                                       border_width=1, corner_radius=15, font=("Inter", 13), fg_color="#1f1f26")
-        self.text_entry.pack(side="left", padx=5)
-        self.text_entry.bind("<Return>", self.submit_text)
-        
-        self.enter_btn = ctk.CTkButton(self.input_frame, text="Ask", width=50, height=35, corner_radius=15, 
-                                       font=("Inter", 12, "bold"), command=self.submit_text)
-        self.enter_btn.pack(side="left")
+        self.top_section = ctk.CTkFrame(self.main_content, fg_color="transparent")
+        self.top_section.pack(fill="both", expand=True, padx=20, pady=(20, 5))
 
-        # --- WAVEFORM VISUALS AT THE BOTTOM ---
-        self.canvas_bg = "#121212" 
-        self.wave_canvas = tk.Canvas(self, width=self.width, height=120, bg=self.canvas_bg, highlightthickness=0)
-        self.wave_canvas.pack(side="bottom", fill="x", pady=0) # Pinned to the hard bottom edge
+        self.wave_frame = ctk.CTkFrame(self.top_section, fg_color="transparent", width=220)
+        self.wave_frame.pack(side="left", fill="y", padx=(0, 20))
+        self.wave_frame.pack_propagate(False)
         
-        # Mac Siri precise colors: Cyan, Magenta, Green, Yellow, White Core
-        self.num_points = 60 
-        self.x_coords = [int(i * (self.width / (self.num_points - 1))) for i in range(self.num_points)]
+        import tkinter as tk
+        self.canvas_bg = "#18181A" 
+        self.wave_canvas = tk.Canvas(self.wave_frame, width=220, height=90, bg=self.canvas_bg, highlightthickness=0)
+        self.wave_canvas.place(relx=0.5, rely=0.5, anchor="center") 
+        
+        self.num_points = 50 
+        self.wave_width = 200
+        self.x_coords = [int(i * (self.wave_width / (self.num_points - 1))) for i in range(self.num_points)]
         self.wave_lines = []
         
-        colors = ["#19AEE3", "#E52C9F", "#44C65D", "#F5AA25", "#ffffff"]
-        widths = [4, 4, 4, 3, 2] # Thinner, more intense strings of light
+        colors = ["#19AEE3", "#E52C9F", "#44C65D", "#F5AA25"]
+        self.bloom_layers = [(6, 0.4), (2, 1.0)]
+        for color in colors:
+            for width, _ in self.bloom_layers:
+                coords = []
+                for x in self.x_coords:
+                    coords.extend([x, 45])
+                line_id = self.wave_canvas.create_line(*coords, fill=color, width=width, smooth=True, capstyle="round")
+                self.wave_lines.append(line_id)
+
+        self.right_col = ctk.CTkFrame(self.top_section, fg_color="transparent")
+        self.right_col.pack(side="left", fill="both", expand=True)
+
+        self.status_label = ctk.CTkLabel(self.right_col, text="Waiting...", font=("Inter", 20, "bold"), text_color="#ffffff")
+        self.status_label.pack(anchor="w", pady=(0, 4))
         
-        for color, width in zip(colors, widths):
-            coords = []
-            for x in self.x_coords:
-                coords.extend([x, 60])
-            # Smooth bezier-like multipoint
-            line_id = self.wave_canvas.create_line(*coords, fill=color, width=width, smooth=True, capstyle="round")
-            self.wave_lines.append(line_id)
+        self.live_transcript = ctk.CTkLabel(self.right_col, text='"Online."', font=("Inter", 14), text_color="#A0A0A0", wraplength=280, justify="left")
+        self.live_transcript.pack(anchor="w", pady=(0, 10))
+
+        self.input_row = ctk.CTkFrame(self.right_col, fg_color="transparent")
+        self.input_row.pack(fill="x", side="bottom")
+        
+        self.text_entry = ctk.CTkEntry(self.input_row, height=36, placeholder_text="Type or Speak...", 
+                                       border_width=1, border_color="#3A3A3D", corner_radius=18, font=("Inter", 13), fg_color="#2A2A2D", text_color="#ffffff")
+        self.text_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        self.text_entry.bind("<Return>", self.submit_text)
+        
+        self.tools_frame = ctk.CTkFrame(self.input_row, fg_color="#2A2A2D", height=36, corner_radius=18, border_width=1, border_color="#3A3A3D")
+        self.tools_frame.pack(side="right")
+        
+        self.btn_settings = ctk.CTkButton(self.tools_frame, text="⚙️", width=36, height=36, corner_radius=18, fg_color="transparent", hover_color="#3E3E42", font=("Inter", 16))
+        self.btn_settings.pack(side="left", padx=(2,0))
+        
+        self.btn_sep = ctk.CTkFrame(self.tools_frame, width=1, height=18, fg_color="#454549")
+        self.btn_sep.pack(side="left", pady=9, padx=2)
+        
+        self.btn_mic = ctk.CTkButton(self.tools_frame, text="🎤", width=36, height=36, corner_radius=18, fg_color="transparent", hover_color="#3E3E42", font=("Inter", 14), text_color="#A259FF")
+        self.btn_mic.pack(side="left", padx=(0,2))
+
+        self.bottom_bar = ctk.CTkFrame(self.main_content, fg_color="transparent", height=30)
+        self.bottom_bar.pack(fill="x", side="bottom", padx=20, pady=(0, 10))
+        
+        self.status_sep = ctk.CTkFrame(self.main_content, height=1, fg_color="#333333")
+        self.status_sep.pack(fill="x", side="bottom", padx=20, pady=(0, 5))
+        
+        self.bottom_status_title = ctk.CTkLabel(self.bottom_bar, text="Mira Status: ", font=("Inter", 12), text_color="#A0A0A0")
+        self.bottom_status_title.pack(side="left")
+        
+        self.bottom_status_text = ctk.CTkLabel(self.bottom_bar, text="Ready", font=("Inter", 12), text_color="#A0A0A0")
+        self.bottom_status_text.pack(side="left", padx=(5, 0))
+
+        self.star_icon = ctk.CTkLabel(self.bottom_bar, text="✨", font=("Inter", 14), text_color="#A0A0A0")
+        self.star_icon.pack(side="right")
 
         self.animation_state = "Waiting"
         self.phase = 0.0
+        
+        self.spring_velocity = 0.0
+        self.target_amplitude = 1.0
+        self.current_amplitude = 1.0
         
         self.session_active = False
         self.is_visible = False
@@ -102,25 +147,28 @@ class MiraApp(ctk.CTk):
         self.withdraw()
 
     def slide_animation(self):
-        """Smooth ease-out sliding animation loop for the window."""
         if not self.animating_slide:
             return
             
-        target = self.target_y if self.is_visible else -self.height - 50
-        diff = target - self.current_y
+        target = self.target_y if self.is_visible else self.hidden_y
         
-        if abs(diff) < 2:
+        stiffness = 0.15
+        damping = 0.75
+        
+        force = (target - self.current_y) * stiffness
+        self.spring_velocity = (self.spring_velocity + force) * damping
+        self.current_y += self.spring_velocity
+        
+        if abs(target - self.current_y) < 0.5 and abs(self.spring_velocity) < 0.5:
             self.current_y = target
             self.geometry(f'{self.width}x{self.height}+{self.x_pos}+{int(self.current_y)}')
             self.animating_slide = False
             if not self.is_visible:
-                self.withdraw() # Hide it fully when off-screen
+                self.withdraw()
             return
             
-        # Ease out scaling
-        self.current_y += diff * 0.25 
         self.geometry(f'{self.width}x{self.height}+{self.x_pos}+{int(self.current_y)}')
-        self.after(16, self.slide_animation) # 60fps sliding
+        self.after(16, self.slide_animation)
 
     def toggle_visibility(self):
         if not self.is_visible:
@@ -129,47 +177,55 @@ class MiraApp(ctk.CTk):
             self.is_visible = True
             self.animating_slide = True
             self.slide_animation()
+            
+            self.status_label.configure(text="Waiting...")
+            self.bottom_status_text.configure(text="Ready", text_color="#A0A0A0")
         else:
             self.is_visible = False
             self.animating_slide = True
             self.slide_animation()
 
     def update_wave(self):
-        """Continuous mathematical animation loop for the waveform."""
+        import math
         if self.session_active and self.is_visible:
-            self.phase += 0.12
-            amplitude_mult = 1.0
+            self.phase += 0.15
+            
+            target_amp = 1.0
             speed_mult = 1.0
             
             if self.animation_state == "Listening":
-                amplitude_mult = 35.0
-                speed_mult = 2.2
+                target_amp = 30.0
+                speed_mult = 2.5
             elif self.animation_state == "Processing":
-                amplitude_mult = 15.0
+                target_amp = 15.0
                 speed_mult = 3.5
             elif self.animation_state == "Waiting":
-                amplitude_mult = 4.0
+                target_amp = 5.0
                 speed_mult = 0.8
             elif self.animation_state == "Quiet":
-                amplitude_mult = 0.0 
+                target_amp = 0.0 
                 
-            for idx, line_id in enumerate(self.wave_lines):
-                new_coords = []
-                for i, x in enumerate(self.x_coords):
-                    # Bell Curve
-                    envelope = math.sin((i / (self.num_points - 1)) * math.pi)
+            self.current_amplitude += (target_amp - self.current_amplitude) * 0.1
+                
+            line_idx = 0
+            for color_idx in range(4):
+                for bloom_idx in range(2):
+                    line_id = self.wave_lines[line_idx]
+                    layer_offset = (color_idx * 1.5)
                     
-                    # Offsets to create crossing strands
-                    layer_offset = (idx * 1.5) 
-                    noise1 = math.sin(self.phase * speed_mult + (i * 0.15) + layer_offset) 
-                    noise2 = math.cos(self.phase * speed_mult * 0.7 + (i * 0.25))
-                    
-                    combined_noise = (noise1 + noise2) * 0.5 
-                    
-                    y = 60 + (combined_noise * amplitude_mult * envelope) # center at 60px height
-                    new_coords.extend([x, y])
-                    
-                self.wave_canvas.coords(line_id, *new_coords)
+                    new_coords = []
+                    for i, x in enumerate(self.x_coords):
+                        envelope = math.sin((i / (self.num_points - 1)) * math.pi)
+                        noise1 = math.sin(self.phase * speed_mult + (i * 0.15) + layer_offset) 
+                        noise2 = math.cos(self.phase * speed_mult * 0.7 + (i * 0.25))
+                        
+                        combined_noise = (noise1 + noise2) * 0.5 
+                        
+                        y = 45 + (combined_noise * self.current_amplitude * envelope)
+                        new_coords.extend([x, y])
+                        
+                    self.wave_canvas.coords(line_id, *new_coords)
+                    line_idx += 1
                 
         self.after(30, self.update_wave)
 
@@ -178,47 +234,46 @@ class MiraApp(ctk.CTk):
         if cmd:
             self.text_entry.delete(0, "end")
             self.live_transcript.configure(text=f'"{cmd}"')
+            self.status_label.configure(text="Processing...")
+            import queue
             text_command_queue.put(cmd)
 
-
     def show_popup(self, title, link):
-        """Creates an ultra premium 'Toast' style Result pop up sliding from right."""
         popup = ctk.CTkToplevel(self)
         popup.title("Mira Notify")
-        popup.geometry("320x130")
+        popup.geometry("360x90")
         popup.attributes('-topmost', True)
         popup.overrideredirect(True) 
         
-        popup.configure(fg_color="#181818")
-        
+        popup.configure(fg_color="#18181F")
         try:
+            import pywinstyles
             pywinstyles.apply_style(popup, "acrylic")
         except:
             pass
             
         popup.update_idletasks()
         
-        # Spawn relative to the main Siri window
-        x = self.winfo_x() - 340 # Spawn to the left of the assistant panel
-        y = self.target_y # align with top
+        x = self.x_pos + (self.width // 2) - 180 
+        y = self.target_y - 110
         popup.geometry(f"+{x}+{y}")
         
-        lbl = ctk.CTkLabel(popup, text=title, font=("Outfit", 16, "bold"), text_color="#ffffff", wraplength=280)
-        lbl.pack(pady=(15, 10), padx=10)
+        content = ctk.CTkFrame(popup, fg_color="transparent")
+        content.pack(fill="both", expand=True, padx=15, pady=15)
         
-        btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
-        btn_frame.pack()
+        lbl = ctk.CTkLabel(content, text=title, font=("Outfit", 15, "bold"), text_color="#ffffff", wraplength=200, anchor="w", justify="left")
+        lbl.pack(side="left", fill="x", expand=True)
         
-        btn = ctk.CTkButton(btn_frame, text="Open Link", corner_radius=15, width=120, height=30, 
-                            font=("Inter", 13, "bold"), command=lambda: webbrowser.open(link))
-        btn.pack(side="left", padx=5)
+        import webbrowser
+        btn = ctk.CTkButton(content, text="Open", corner_radius=15, width=60, height=30, 
+                            font=("Inter", 12, "bold"), fg_color="#ffffff", text_color="#000000", hover_color="#dddddd", 
+                            command=lambda: webbrowser.open(link))
+        btn.pack(side="right", padx=(5, 0))
         
-        close_btn = ctk.CTkButton(btn_frame, text="Dismiss", width=80, height=30, 
-                                  font=("Inter", 13), fg_color="#333333", hover_color="#555555", corner_radius=15, 
-                                  command=popup.destroy)
-        close_btn.pack(side="left", padx=5)
+        popup.after(8000, popup.destroy)
 
     def check_queue(self):
+        import queue
         try:
             while True:
                 msg = msg_queue.get_nowait()
@@ -228,17 +283,28 @@ class MiraApp(ctk.CTk):
                     self.live_transcript.configure(text="")
                     self.animation_state = "Waiting"
                 elif msg["type"] == "STATUS":
+                    self.status_label.configure(text=msg["text"])
+                    self.bottom_status_text.configure(text=msg["text"], text_color="#A0A0A0")
                     if "Listening" in msg["text"]:
                         self.animation_state = "Listening"
                     elif "Processing" in msg["text"]:
+                        self.animation_state = "Processing"
+                    elif "Thinking" in msg["text"]:
                         self.animation_state = "Processing"
                     elif "Waiting" in msg["text"]:
                         self.animation_state = "Waiting"
                 elif msg["type"] == "LOG":
                     clean_text = msg["text"].replace("Mira: ", "").replace("You (Voice): ", "").replace("You (Typed): ", "")
-                    self.live_transcript.configure(text=f'"{clean_text}"')
-                    if "Mira:" in msg["text"]:
+                    if "Gemini Error" in msg["text"] or "Error:" in msg["text"]:
+                        self.bottom_status_text.configure(text="Error Communicating with Gemini", text_color="#FF9500")
+                        self.status_label.configure(text="Error")
+                        self.animation_state = "Waiting"
+                    elif "Mira:" in msg["text"]:
+                        self.status_label.configure(text="Mira")
+                        self.live_transcript.configure(text=f'"{clean_text}"')
                         self.animation_state = "Listening" 
+                    else:
+                        self.live_transcript.configure(text=f'"{clean_text}"')
                 elif msg["type"] == "POPUP":
                     self.show_popup(msg["title"], msg["link"])
                 elif msg["type"] == "HIDE":
@@ -248,7 +314,6 @@ class MiraApp(ctk.CTk):
             pass
         finally:
             self.after(50, self.check_queue)
-
 
 def process_user_intent(command, app, speak):
     """Central location processing requests originating from either Voice or Typed Input."""
@@ -289,25 +354,24 @@ def process_user_intent(command, app, speak):
         return "EXIT"
 
     else:
-        msg_queue.put({"type": "STATUS", "text": "Searching..."})
+        msg_queue.put({"type": "STATUS", "text": "Thinking..."})
         try:
-            results = wikipedia.search(command)
-            if not results:
-                speak("I couldn't find anything online about that.")
+            if not gemini_client:
+                speak("Please set your Gemini API key in the code to enable AI answers.")
             else:
-                best_match = results[0]
-                page = wikipedia.page(best_match, auto_suggest=False)
-                msg_queue.put({"type": "POPUP", "title": page.title, "link": page.url})
-                summary_text = wikipedia.summary(best_match, sentences=2, auto_suggest=False)
-                speak(f"From Wikipedia: {summary_text}")
+                # Add a system prompt hint so it speaks well on a voice assistant
+                prompt = f"Answer concisely in 1 to 3 sentences suitable for a voice assistant to read aloud: {command}"
+                response = gemini_client.models.generate_content(
+                    model='gemini-1.5-flash',
+                    contents=prompt
+                )
                 
-        except wikipedia.exceptions.DisambiguationError as e:
-            speak(f"That search was too broad. Did you mean {e.options[0]}?")
-        except wikipedia.exceptions.PageError:
-            speak("I couldn't isolate a direct page for that request.")
+                # Clean up markdown asterisks for the TTS engine
+                gemini_response = response.text.replace('*', '').replace('#', '')
+                speak(gemini_response)
         except Exception as e:
-            msg_queue.put({"type": "LOG", "text": f"Search Error: {e}"})
-            speak("Encountered an error reading the results.")
+            msg_queue.put({"type": "LOG", "text": f"Gemini Error: {e}"})
+            speak("Encountered an error communicating with Gemini.")
             
     return "CONTINUE"
 
