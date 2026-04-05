@@ -455,7 +455,12 @@ class MiraApp(ctk.CTk):
             r = requests.get(url, timeout=5)
             img = Image.open(BytesIO(r.content)).resize(size, Image.LANCZOS)
             photo = ctk.CTkImage(light_image=img, dark_image=img, size=size)
-            self.after(0, lambda: lbl.configure(image=photo))
+            
+            def apply_img():
+                lbl.configure(image=photo)
+                lbl.image = photo  # Keep strong reference to prevent GC
+                
+            self.after(0, apply_img)
         except Exception:
             pass
 
@@ -590,7 +595,7 @@ class MiraApp(ctk.CTk):
                         self.hide()
 
                 elif t == "MEDIA":
-                    self.show_media(msg)
+                    self.show_media(msg.get("msg", msg))
 
         except queue.Empty:
             pass
