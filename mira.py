@@ -186,15 +186,15 @@ class MiraApp(ctk.CTk):
 
     # ── BUILD ────────────────────────────────────────────
     def _build(self):
-        self.configure(fg_color="#0D0D10")
+        self.configure(fg_color=("gray85", "#0D0D10"))
 
         # Dark frosted card — matches screenshot exactly
         self.card = ctk.CTkFrame(
             self,
-            fg_color="#1C1C1F",
+            fg_color=("gray95", "#1C1C1F"),
             corner_radius=20,
             border_width=1,
-            border_color="#3A3A3C",
+            border_color=("gray75", "#3A3A3C"),
         )
         self.card.pack(fill="both", expand=True, padx=1, pady=1)
 
@@ -231,7 +231,7 @@ class MiraApp(ctk.CTk):
             txt_box,
             text="Waiting…",
             font=("SF Pro Display", 22, "bold"),
-            text_color="#F5F5F7",
+            text_color=("black", "#F5F5F7"),
             anchor="w",
         )
         self.lbl_state.pack(anchor="w", pady=(16, 0))
@@ -243,7 +243,7 @@ class MiraApp(ctk.CTk):
             txt_box,
             text="",
             font=("SF Pro Display", 14),
-            text_color="#AEAEB2",
+            text_color=("gray30", "#AEAEB2"),
             wraplength=270,
             justify="left",
             anchor="w",
@@ -253,7 +253,7 @@ class MiraApp(ctk.CTk):
         self.lbl_resp.bind("<B1-Motion>",       self._drag_do)
 
         # ── SEPARATOR ──
-        ctk.CTkFrame(self.card, height=1, fg_color="#2C2C2E").pack(
+        ctk.CTkFrame(self.card, height=1, fg_color=("gray75", "#2C2C2E")).pack(
             fill="x", padx=18, pady=(12, 0)
         )
 
@@ -266,12 +266,12 @@ class MiraApp(ctk.CTk):
             height=40,
             placeholder_text="Type or Speak…",
             border_width=1,
-            border_color="#3A3A3C",
+            border_color=("gray75", "#3A3A3C"),
             corner_radius=20,
             font=("SF Pro Display", 14),
-            fg_color="#2C2C2E",
-            text_color="#F5F5F7",
-            placeholder_text_color="#636366",
+            fg_color=("gray90", "#2C2C2E"),
+            text_color=("black", "#F5F5F7"),
+            placeholder_text_color=("gray40", "#636366"),
         )
         self.entry.pack(side="left", fill="x", expand=True)
         self.entry.bind("<Return>", self._on_enter)
@@ -280,10 +280,10 @@ class MiraApp(ctk.CTk):
         ctk.CTkButton(
             self.bot, text="⚙",
             width=40, height=40, corner_radius=20,
-            fg_color="#2C2C2E", hover_color="#3A3A3C",
-            border_width=1, border_color="#3A3A3C",
+            fg_color=("gray90", "#2C2C2E"), hover_color=("gray75", "#3A3A3C"),
+            border_width=1, border_color=("gray75", "#3A3A3C"),
             font=("SF Pro Display", 17),
-            text_color="#8E8E93",
+            text_color=("gray40", "#8E8E93"),
             command=self._settings,
         ).pack(side="left", padx=(8, 0))
 
@@ -291,42 +291,80 @@ class MiraApp(ctk.CTk):
         ctk.CTkButton(
             self.bot, text="⌕",
             width=40, height=40, corner_radius=20,
-            fg_color="#2C2C2E", hover_color="#3A3A3C",
-            border_width=1, border_color="#3A3A3C",
+            fg_color=("gray90", "#2C2C2E"), hover_color=("gray75", "#3A3A3C"),
+            border_width=1, border_color=("gray75", "#3A3A3C"),
             font=("SF Pro Display", 18),
-            text_color="#8E8E93",
+            text_color=("gray40", "#8E8E93"),
             command=self._search,
         ).pack(side="left", padx=(6, 0))
 
         # ── MEDIA CONTROLS ROW ──
-        self.media_row = ctk.CTkFrame(self.card, fg_color="#2C2C2E", corner_radius=10, height=44)
-        
-        self.lbl_thumb = ctk.CTkLabel(self.media_row, text="", width=36, height=36, corner_radius=4, fg_color="#1C1C1F")
-        self.lbl_thumb.pack(side="left", padx=(6, 2), pady=4)
-        
-        self.btn_prev = ctk.CTkButton(self.media_row, text="⏮", width=40, height=30, fg_color="transparent", hover_color="#3A3A3C", command=lambda: self._media_cmd("previous track"))
-        self.btn_prev.pack(side="left", padx=5, pady=5)
-        
-        self.btn_play = ctk.CTkButton(self.media_row, text="⏯", width=40, height=30, fg_color="transparent", hover_color="#3A3A3C", command=lambda: self._media_cmd("play/pause media"))
-        self.btn_play.pack(side="left", padx=5, pady=5)
-        
-        self.btn_next = ctk.CTkButton(self.media_row, text="⏭", width=40, height=30, fg_color="transparent", hover_color="#3A3A3C", command=lambda: self._media_cmd("next track"))
-        self.btn_next.pack(side="left", padx=5, pady=5)
-        
-        self.btn_vup = ctk.CTkButton(self.media_row, text="🔊", width=30, height=30, fg_color="transparent", hover_color="#3A3A3C", command=lambda: self._media_cmd("volume up"))
-        self.btn_vup.pack(side="right", padx=(5, 5), pady=5)
-        
-        self.btn_vdown = ctk.CTkButton(self.media_row, text="🔉", width=30, height=30, fg_color="transparent", hover_color="#3A3A3C", command=lambda: self._media_cmd("volume down"))
-        self.btn_vdown.pack(side="right", padx=(5, 2), pady=5)
+        self.content_frame = ctk.CTkFrame(self.card, fg_color="transparent")
+        self.content_frame.pack(fill="both", expand=True, padx=18, pady=(0, 10))
 
-        self.lbl_now_playing = ctk.CTkLabel(self.media_row, text="", font=("SF Pro Display", 13), text_color="#F5F5F7", anchor="w")
-        self.lbl_now_playing.pack(side="left", padx=10, fill="x", expand=True)
+        self.media_row = ctk.CTkFrame(self.content_frame, fg_color="#1C1C1F", corner_radius=10)
+        
+        # Track Slider Frame
+        self.slider_frame = ctk.CTkFrame(self.media_row, fg_color="transparent", height=20)
+        self.slider_frame.pack(fill="x", padx=8, pady=(8, 0))
+        
+        self.time_lbl_1 = ctk.CTkLabel(self.slider_frame, text="0:00", font=("SF Pro Display", 10), text_color="#AEAEB2")
+        self.time_lbl_1.pack(side="left", padx=(4, 8))
+        
+        self.track_slider = ctk.CTkSlider(self.slider_frame, height=10, button_length=0, progress_color="#FF0000", fg_color="#3A3A3C")
+        self.track_slider.set(0)
+        self.track_slider.pack(side="left", fill="x", expand=True)
+
+        self.time_lbl_2 = ctk.CTkLabel(self.slider_frame, text="3:15", font=("SF Pro Display", 10), text_color="#AEAEB2")
+        self.time_lbl_2.pack(side="right", padx=(8, 4))
+
+        # Main Control Frame
+        mid_controls = ctk.CTkFrame(self.media_row, fg_color="transparent")
+        mid_controls.pack(fill="x", padx=8, pady=4)
+        
+        # Thumbnail and Title
+        left_info = ctk.CTkFrame(mid_controls, fg_color="transparent")
+        left_info.pack(side="left", fill="x", expand=True)
+
+        self.lbl_thumb = ctk.CTkLabel(left_info, text="", width=36, height=36, corner_radius=4, fg_color="#2C2C2E")
+        self.lbl_thumb.pack(side="left", padx=(0, 8), pady=2)
+        
+        self.lbl_now_playing = ctk.CTkLabel(left_info, text="", font=("SF Pro Display", 12, "bold"), text_color="#F5F5F7", anchor="w")
+        self.lbl_now_playing.pack(side="left", fill="x", expand=True)
+
+        # Right Action Buttons
+        right_btns = ctk.CTkFrame(mid_controls, fg_color="transparent")
+        right_btns.pack(side="right")
+        
+        opts = {"width": 30, "height": 30, "fg_color": "transparent", "hover_color": "#3A3A3C", "text_color": "#F5F5F7", "font": ("SF Pro Display", 14)}
+        ctk.CTkButton(right_btns, text="👎", command=lambda: self._set_status("Disliked", "#FF453A"), **opts).pack(side="left", padx=2)
+        ctk.CTkButton(right_btns, text="👍", command=lambda: self._set_status("Liked", "#30D158"), **opts).pack(side="left", padx=2)
+        ctk.CTkButton(right_btns, text="⠇", command=lambda: self._set_status("More actions", "#AEAEB2"), **opts).pack(side="left", padx=(2, 6))
+
+        # Bottom Player Buttons
+        bot_controls = ctk.CTkFrame(self.media_row, fg_color="transparent")
+        bot_controls.pack(fill="x", padx=8, pady=(0, 8))
+        
+        center_frame = ctk.CTkFrame(bot_controls, fg_color="transparent")
+        center_frame.pack(side="left", expand=True)
+
+        ctk.CTkButton(center_frame, text="🔀", command=lambda: self._set_status("Shuffle toggled", "#AEAEB2"), **opts).pack(side="left", padx=6)
+        ctk.CTkButton(center_frame, text="⏮", command=lambda: self._media_cmd("previous track"), **opts).pack(side="left", padx=4)
+        
+        play_opts = opts.copy()
+        play_opts["font"] = ("SF Pro Display", 18)
+        ctk.CTkButton(center_frame, text="▶", command=lambda: self._media_cmd("play/pause media"), **play_opts).pack(side="left", padx=4)
+        
+        ctk.CTkButton(center_frame, text="⏭", command=lambda: self._media_cmd("next track"), **opts).pack(side="left", padx=4)
+        ctk.CTkButton(center_frame, text="🔂", command=lambda: self._set_status("Repeat toggled", "#AEAEB2"), **opts).pack(side="left", padx=6)
+
+        vol_frame = ctk.CTkFrame(bot_controls, fg_color="transparent")
+        vol_frame.pack(side="right")
+        ctk.CTkButton(vol_frame, text="🔉", command=lambda: self._media_cmd("volume down"), **opts).pack(side="left", padx=2)
+        ctk.CTkButton(vol_frame, text="🔊", command=lambda: self._media_cmd("volume up"), **opts).pack(side="left", padx=2)
 
         # ── SUGGESTIONS ROW ──
-        self.sug_frame = ctk.CTkFrame(self.card, fg_color="transparent")
-        self.sug_frame.bind("<ButtonPress-1>", self._drag_start)
-        self.sug_frame.bind("<B1-Motion>", self._drag_do)
-        self.sug_frame.bind("<ButtonRelease-1>", self._drag_end)
+        self.sug_frame = ctk.CTkScrollableFrame(self.content_frame, fg_color="transparent", height=130)
 
         # ── STATUS BAR ──
         self.bar = ctk.CTkFrame(self.card, fg_color="transparent")
@@ -418,10 +456,10 @@ class MiraApp(ctk.CTk):
                 widget.destroy()
                 
             if sugs:
-                ctk.CTkLabel(self.sug_frame, text="Suggested", font=("SF Pro Display", 11, "bold"), text_color="#AEAEB2", anchor="w").pack(fill="x", padx=18, pady=(0,4))
+                ctk.CTkLabel(self.sug_frame, text="Suggested", font=("SF Pro Display", 11, "bold"), text_color="#AEAEB2", anchor="w").pack(fill="x", pady=(0,4))
                 for sug in sugs:
                     s_row = ctk.CTkFrame(self.sug_frame, fg_color="#2C2C2E", corner_radius=8, height=44)
-                    s_row.pack(fill="x", pady=2, padx=18)
+                    s_row.pack(fill="x", pady=2)
                     
                     s_thumb = ctk.CTkLabel(s_row, text="", width=32, height=32, corner_radius=4, fg_color="#1C1C1F")
                     s_thumb.pack(side="left", padx=(6, 4), pady=4)
@@ -437,15 +475,35 @@ class MiraApp(ctk.CTk):
                     if sug.get("thumb"):
                         threading.Thread(target=self._load_image_to_label, args=(sug["thumb"], s_thumb, (32, 32)), daemon=True).start()
 
-        if not self.sug_frame.winfo_ismapped():
-            self.sug_frame.pack(fill="x", pady=(0, 10), before=self.bar)
+            if not self.sug_frame.winfo_ismapped():
+                self.sug_frame.pack(fill="both", expand=True)
+        else:
+            if self.sug_frame.winfo_ismapped():
+                self.sug_frame.pack_forget()
 
         if not self.media_row.winfo_ismapped():
-            self.media_row.pack(fill="x", padx=18, pady=(0, 10), before=self.sug_frame)
-            
-        if self.H < 440:
-            self.H = 440
+            self.media_row.pack(fill="x", pady=(0, 10))
+
+        if self.H < 500:
+            self.H = 500
             self.geometry(f"{self.W}x{self.H}")
+            
+        self.track_slider.set(0)
+        self._playback_seconds = 0
+        if hasattr(self, "_slider_timer"):
+            self.after_cancel(self._slider_timer)
+        self._animate_slider()
+        
+    def _animate_slider(self):
+        duration_sec = 195
+        self._playback_seconds += 1
+        if self._playback_seconds <= duration_sec:
+            pct = self._playback_seconds / duration_sec
+            self.track_slider.set(pct)
+            m = self._playback_seconds // 60
+            s = self._playback_seconds % 60
+            self.time_lbl_1.configure(text=f"{m}:{s:02d}")
+            self._slider_timer = self.after(1000, self._animate_slider)
                 
     def _load_image_to_label(self, url, lbl, size=(36, 36)):
         try:
@@ -471,7 +529,7 @@ class MiraApp(ctk.CTk):
             return
         self.entry.delete(0, "end")
         self.lbl_resp.configure(text=f'"{cmd}"')
-        self.lbl_state.configure(text="Processing…", text_color="#F5F5F7")
+        self.lbl_state.configure(text="Processing…", text_color=("black", "#F5F5F7"))
         self._set_status("Processing…", "#FF9F0A")
         self.anim_state = "Processing"
         text_command_queue.put(cmd)
@@ -483,7 +541,7 @@ class MiraApp(ctk.CTk):
             webbrowser.open(
                 f"https://www.google.com/search?q={requests.utils.quote(q)}"
             )
-            self.lbl_state.configure(text="Searching…", text_color="#F5F5F7")
+            self.lbl_state.configure(text="Searching…", text_color=("black", "#F5F5F7"))
             self.lbl_resp.configure(text=f'"{q}"')
             self._set_status(f'Google: {q[:36]}', "#30D158")
         else:
@@ -491,7 +549,14 @@ class MiraApp(ctk.CTk):
             self._set_status("Opened Google", "#30D158")
 
     def _settings(self):
-        self._set_status("Settings — coming soon", "#636366")
+        current_mode = ctk.get_appearance_mode()
+        new_mode = "Light" if current_mode == "Dark" else "Dark"
+        ctk.set_appearance_mode(new_mode)
+        
+        # update orb cv bg
+        bg_col = "#1C1C1F" if new_mode == "Dark" else "gray95"
+        self.orb_cv.configure(bg=bg_col)
+        self._set_status(f"{new_mode} Mode", "#636366")
 
     def _set_status(self, text, color="#636366"):
         self.lbl_status.configure(text=text, text_color=color)
@@ -549,7 +614,7 @@ class MiraApp(ctk.CTk):
 
                 elif t == "STATUS":
                     txt = msg["text"]
-                    self.lbl_state.configure(text=txt, text_color="#F5F5F7")
+                    self.lbl_state.configure(text=txt, text_color=("black", "#F5F5F7"))
                     col_map = {
                         "Listening": "#30D158", "Speaking": "#5E5CE6",
                         "Processing": "#FF9F0A", "Thinking": "#FF9F0A",
@@ -577,7 +642,7 @@ class MiraApp(ctk.CTk):
                         clean = raw[5:].strip()
                         if clean:
                             self.lbl_state.configure(
-                                text="Mira", text_color="#F5F5F7")
+                                text="Mira", text_color=("black", "#F5F5F7"))
                             self.lbl_resp.configure(text=f'"{clean}"')
                         self._set_status("Speaking…", "#5E5CE6")
                         self.anim_state = "Speaking"
@@ -586,7 +651,7 @@ class MiraApp(ctk.CTk):
                         self.lbl_resp.configure(text=f'"{clean}"')
 
                 elif t == "DONE":
-                    self.lbl_state.configure(text="Waiting…", text_color="#F5F5F7")
+                    self.lbl_state.configure(text="Waiting…", text_color=("black", "#F5F5F7"))
                     self._set_status("Idle", "#636366")
                     self.anim_state = "Waiting"
 
