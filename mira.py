@@ -1,893 +1,766 @@
-import pyttsx3
-import keyboard
 import threading
 import time
 import queue
+import math
+import re
+import webbrowser
+import requests
+import pythoncom
+import pywinstyles
+
 import customtkinter as ctk
 import tkinter as tk
-import pythoncom
-import webbrowser
-from ytmusicapi import YTMusic
-import random
-import math
-import pywinstyles
-import os
+
 from openai import OpenAI
-from typing import List, Tuple
-import tkinter.font as tkfont
-import vlc
-import yt_dlp
-import requests
-from io import BytesIO
-from PIL import Image
+from ytmusicapi import YTMusic
 
-# Setup OpenRouter AI (Qwen)
-OPENROUTER_API_KEY = "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"
-ai_client = None
-if OPENROUTER_API_KEY:
-    ai_client = OpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=OPENROUTER_API_KEY,
-    )
+# ─── AI ───────────────────────────────────────────────────────
+OPENROUTER_API_KEY = "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"
+ai_client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=OPENROUTER_API_KEY,
+) if OPENROUTER_API_KEY else None
 
-msg_queue = queue.Queue()
+msg_queue          = queue.Queue()
 text_command_queue = queue.Queue()
+CONVERSATION_HISTORY = []
 
-# Theme Configuration
-class ThemeManager:
-    def __init__(self):
-        self.current_theme = "dark"  # "dark" or "light"
-        self.themes = {
-            "dark": {
-                "bg_primary": "#0D0D0F",
-                "bg_secondary": "#1A1A1E",
-                "bg_tertiary": "#2D2D31",
-                "bg_hover": "#3E3E42",
-                "text_primary": "#FFFFFF",
-                "text_secondary": "#8E8E93",
-                "text_muted": "#636366",
-                "accent": "#4361EE",
-                "accent_hover": "#5A75FF",
-                "error": "#FF9F0A",
-                "success": "#34C759",
-                "border": "#2D2D31",
-                "separator": "#38383A",
-                "wave_colors": ["#9D4EDD", "#5A189A", "#3A0CA3", "#4361EE", "#4895EF", "#4CC9F0", "#F72585", "#B5179E", "#7209B7", "#560BAD"]
-            },
-            "light": {
-                "bg_primary": "#F5F5F7",
-                "bg_secondary": "#FFFFFF",
-                "bg_tertiary": "#E8E8ED",
-                "bg_hover": "#D2D2D7",
-                "text_primary": "#1D1D1F",
-                "text_secondary": "#6E6E73",
-                "text_muted": "#86868B",
-                "accent": "#007AFF",
-                "accent_hover": "#0051D5",
-                "error": "#FF3B30",
-                "success": "#34C759",
-                "border": "#D2D2D7",
-                "separator": "#C6C6C8",
-                "wave_colors": ["#007AFF", "#5856D6", "#AF52DE", "#FF2D55", "#FF9500", "#FFCC00", "#4CD964", "#5AC8FA", "#007AFF", "#5856D6"]
-            }
-        }
-    
-    def get_colors(self):
-        return self.themes[self.current_theme]
-    
-    def toggle_theme(self):
-        self.current_theme = "light" if self.current_theme == "dark" else "dark"
-        return self.current_theme
+SYSTEM_PROMPT = (
+    "You are Mira, a concise smart assistant. "
+    "Reply in 1-3 sentences. Be direct and natural. "
+    "Never use markdown, bullets, or symbols."
+)
 
-theme_manager = ThemeManager()
+def ai_chat(user_msg):
+    if not ai_client:
+        return "No API key configured."
+    CONVERSATION_HISTORY.append({"role": "user", "content": user_msg})
+    hist = CONVERSATION_HISTORY[-20:]
+    try:
+        resp = ai_client.chat.completions.create(
+            model="qwen/qwen-plus",
+            messages=[{"role": "system", "content": SYSTEM_PROMPT}] + hist,
+        )
+        reply = re.sub(r"[*#`]", "", resp.choices[0].message.content).strip()
+        CONVERSATION_HISTORY.append({"role": "assistant", "content": reply})
+        return reply
+    except Exception as e:
+        return f"AI error: {str(e)[:80]}"
 
-class WaveformAnimation:
-    """Advanced Siri-like waveform animation with theme support"""
-    def __init__(self, canvas, width=220, height=90):
-        self.canvas = canvas
-        self.width = width
-        self.height = height
-        self.num_points = 60
+
+# ─── SIRI ORB ─────────────────────────────────────────────────
+ORB_COLORS = [
+    "#BF5FFF", "#8B5CF6", "#6366F1",
+    "#3B82F6", "#06B6D4", "#A855F7",
+    "#EC4899", "#7C3AED",
+]
+
+class SiriOrb:
+    """Fluid multi-layer orb matching Apple Siri's Mac aesthetic."""
+
+    def __init__(self, canvas, size=110):
+        self.cv    = canvas
+        self.S     = size
+        self.cx    = size / 2
+        self.cy    = size / 2
         self.phase = 0.0
-        self.amplitude = 5.0
-        self.frequency = 1.0
-        self.speed = 0.15
-        self.wave_lines = []
-        self.x_coords = [int(i * (width / (self.num_points - 1))) for i in range(self.num_points)]
-        self.setup_waves()
-    
-    def setup_waves(self):
-        """Create multiple wave layers"""
-        colors = theme_manager.get_colors()["wave_colors"]
-        for i, color in enumerate(colors):
-            width = 3 if i < 5 else 2
-            coords = []
-            for x in self.x_coords:
-                coords.extend([x, self.height // 2])
-            line_id = self.canvas.create_line(
-                *coords, fill=color, width=width, smooth=True, capstyle="round"
-            )
-            self.wave_lines.append({
-                'id': line_id, 'color': color, 'width': width,
-                'offset': i * 0.3, 'frequency': 1.0 + (i * 0.1)
+        self.amp   = 0.05
+        self.spd   = 0.028
+        self._layers = []
+        self._build()
+
+    def _build(self):
+        self.cv.delete("all")
+        self._layers = []
+        cx, cy = self.cx, self.cy
+
+        specs = [
+            # (r_frac, filled, line_width, phase_off, freq, color_idx)
+            (0.90, False, 1, 0.00, 0.90, 7),
+            (0.78, False, 1, 0.65, 1.05, 1),
+            (0.65, False, 2, 1.30, 1.20, 2),
+            (0.52, True,  0, 1.95, 1.35, 0),
+            (0.38, True,  0, 2.60, 1.55, 5),
+        ]
+        for r_frac, filled, lw, po, freq, cidx in specs:
+            r = self.S / 2 * r_frac
+            if filled:
+                oid = self.cv.create_oval(
+                    cx-r, cy-r, cx+r, cy+r,
+                    fill=ORB_COLORS[cidx], outline="",
+                )
+            else:
+                oid = self.cv.create_oval(
+                    cx-r, cy-r, cx+r, cy+r,
+                    outline=ORB_COLORS[cidx], width=lw, fill="",
+                )
+            self._layers.append({
+                "id": oid, "r_frac": r_frac,
+                "filled": filled, "phase_off": po,
+                "freq": freq, "color_idx": cidx,
             })
-    
-    def update_colors(self):
-        """Update wave colors when theme changes"""
-        colors = theme_manager.get_colors()["wave_colors"]
-        for i, layer in enumerate(self.wave_lines):
-            if i < len(colors):
-                self.canvas.itemconfig(layer['id'], fill=colors[i])
-    
-    def update(self, state: str):
-        """Update waveform based on state"""
-        self.phase += self.speed
-        
-        if state == "Listening":
-            target_amplitude, target_speed = 35.0, 0.3
-        elif state == "Processing":
-            target_amplitude, target_speed = 20.0, 0.25
-        elif state == "Speaking":
-            target_amplitude, target_speed = 25.0, 0.2
-        else:
-            target_amplitude, target_speed = 3.0, 0.1
-        
-        self.amplitude += (target_amplitude - self.amplitude) * 0.1
-        self.speed += (target_speed - self.speed) * 0.1
-        
-        for layer in self.wave_lines:
-            new_coords = []
-            for i, x in enumerate(self.x_coords):
-                t = i / (self.num_points - 1)
-                wave1 = math.sin(self.phase * layer['frequency'] * 2 + t * math.pi * 2 + layer['offset'])
-                wave2 = math.sin(self.phase * 1.5 + t * math.pi * 4 + layer['offset'] * 2) * 0.5
-                wave3 = math.cos(self.phase * 0.8 + t * math.pi * 3) * 0.3
-                envelope = math.sin(t * math.pi)
-                y_offset = (wave1 + wave2 + wave3) * self.amplitude * envelope
-                y = self.height // 2 + y_offset
-                new_coords.extend([x, y])
-            self.canvas.coords(layer['id'], *new_coords)
 
-class MusicPlayerFrame(ctk.CTkFrame):
-    """Integrated native music player using VLC"""
-    def __init__(self, master, **kwargs):
-        super().__init__(master, **kwargs)
-        self.current_song = None
-        self.is_playing = False
-        self.vlc_instance = vlc.Instance()
-        self.player = self.vlc_instance.media_player_new()
-        self.duration = 0
-        self.playlist_queue = []
-        self.current_idx = 0
-        self.setup_ui()
-    
-    def setup_ui(self):
-        colors = theme_manager.get_colors()
-        self.player_container = ctk.CTkFrame(self, fg_color=colors["bg_tertiary"], corner_radius=12)
-        self.player_container.pack(fill="x", padx=12, pady=(0, 12))
-        self.info_frame = ctk.CTkFrame(self.player_container, fg_color="transparent")
-        self.info_frame.pack(fill="x", padx=15, pady=15)
-        
-        self.album_art = ctk.CTkLabel(
-            self.info_frame, text="🎵", font=("SF Pro Display", 24),
-            width=60, height=60, corner_radius=8, fg_color=colors["bg_hover"],
-            text_color=colors["text_muted"]
-        )
-        self.album_art.pack(side="left", padx=(0, 15))
-        
-        self.song_info_frame = ctk.CTkFrame(self.info_frame, fg_color="transparent")
-        self.song_info_frame.pack(side="left", fill="both", expand=True, padx=(0, 10))
-        self.full_title = "Loading..."
-        self.full_artist = "—"
-        self.title_offset = 0
-        self.artist_offset = 0
-        
-        self.song_title = ctk.CTkLabel(
-            self.song_info_frame, text="Loading...",
-            font=("SF Pro Display", 15, "bold"), text_color=colors["text_primary"],
-            anchor="w", justify="left", width=340
-        )
-        self.song_title.pack(anchor="w", pady=(0, 4))
-        self.song_artist = ctk.CTkLabel(
-            self.song_info_frame, text="—", font=("SF Pro Display", 13),
-            text_color=colors["text_secondary"], anchor="w", justify="left", width=340
-        )
-        self.song_artist.pack(anchor="w")
-        
-        self.close_btn = ctk.CTkButton(
-            self.info_frame, text="✕", width=28, height=28, corner_radius=14,
-            fg_color="transparent", hover_color=colors["bg_hover"],
-            font=("SF Pro Display", 14), text_color=colors["text_muted"], command=self.hide_player
-        )
-        self.close_btn.pack(side="right")
-        
-        self.progress_slider = ctk.CTkSlider(
-            self.player_container, width=300, height=14,
-            fg_color=colors["bg_hover"], progress_color=colors["accent"],
-            button_color=colors["text_primary"], button_hover_color=colors["text_muted"],
-            command=self.seek_song
-        )
-        self.progress_slider.pack(fill="x", padx=15, pady=(0, 12))
-        self.progress_slider.set(0)
-        
-        self.controls_frame = ctk.CTkFrame(self.player_container, fg_color="transparent")
-        self.controls_frame.pack(fill="x", padx=15, pady=(0, 15))
-        self.current_time = ctk.CTkLabel(self.controls_frame, text="0:00", font=("SF Pro Display", 11), text_color=colors["text_muted"])
-        self.current_time.pack(side="left")
-        self.total_time = ctk.CTkLabel(self.controls_frame, text="0:00", font=("SF Pro Display", 11), text_color=colors["text_muted"])
-        self.total_time.pack(side="right")
-        
-        self.btn_frame = ctk.CTkFrame(self.controls_frame, fg_color="transparent")
-        self.btn_frame.pack(fill="x", pady=(8, 0))
-        self.btn_prev = ctk.CTkButton(
-            self.btn_frame, text="⏪", width=36, height=36, corner_radius=18,
-            fg_color="transparent", hover_color=colors["bg_hover"],
-            font=("SF Pro Display", 16), text_color=colors["text_primary"], command=self.prev_song
-        )
-        self.btn_prev.pack(side="left", padx=(0, 20))
-        self.btn_play = ctk.CTkButton(
-            self.btn_frame, text="▶", width=48, height=48, corner_radius=24,
-            fg_color=colors["accent"], hover_color=colors["accent_hover"],
-            font=("SF Pro Display", 18), text_color="#FFFFFF", command=self.toggle_play
-        )
-        self.btn_play.pack(side="left", padx=20)
-        self.btn_next = ctk.CTkButton(
-            self.btn_frame, text="⏩", width=36, height=36, corner_radius=18,
-            fg_color="transparent", hover_color=colors["bg_hover"],
-            font=("SF Pro Display", 16), text_color=colors["text_primary"], command=self.next_song
-        )
-        self.btn_next.pack(side="left", padx=(20, 0))
-        
-        self.vol_slider = ctk.CTkSlider(
-            self.btn_frame, width=80, height=8,
-            fg_color=colors["bg_hover"], progress_color=colors["text_muted"],
-            button_color=colors["text_muted"], button_hover_color=colors["text_primary"],
-            command=self.set_volume
-        )
-        self.vol_slider.pack(side="right", padx=(20, 0), pady=(14, 0))
-        self.vol_slider.set(1.0)
-        
-        self.pack_forget()
-        self.update_progress_loop()
+        self._glint = self.cv.create_oval(0,0,1,1, fill="#FFFFFF", outline="")
 
-    def set_volume(self, value):
-        if hasattr(self, 'player'):
-            self.player.audio_set_volume(int(value * 100))
+    def animate(self, state):
+        self.phase += self.spd
+        tgt_amp, tgt_spd = {
+            "Listening":  (0.80, 0.072),
+            "Processing": (0.52, 0.090),
+            "Speaking":   (0.65, 0.060),
+        }.get(state, (0.06, 0.028))
 
-    def seek_song(self, value):
-        length = self.player.get_length()
-        if length > 0:
-            self.player.set_time(int(length * value))
+        self.amp += (tgt_amp - self.amp) * 0.07
+        self.spd += (tgt_spd - self.spd) * 0.07
 
-    def update_progress_loop(self):
-        if self.is_playing and self.player.get_state() == vlc.State.Playing:
-            time_ms = self.player.get_time()
-            if time_ms > 0:
-                length = self.player.get_length()
-                if length > 0:
-                    self.total_time.configure(text=f"{length//60000}:{(length//1000)%60:02d}")
-                    self.current_time.configure(text=f"{time_ms//60000}:{(time_ms//1000)%60:02d}")
-                    self.progress_slider.set(time_ms / length)
-                    
-                    if time_ms > length - 1500:
-                        self.next_song()
-                        
-        # Marquee text logic
-        if len(self.full_title) > 38:
-            self.title_offset = (self.title_offset + 1) % (len(self.full_title) + 5)
-            display = (self.full_title + "     " + self.full_title)[self.title_offset:self.title_offset+38]
-            self.song_title.configure(text=display)
-            
-        if len(self.full_artist) > 42:
-            self.artist_offset = (self.artist_offset + 1) % (len(self.full_artist) + 5)
-            display = (self.full_artist + "     " + self.full_artist)[self.artist_offset:self.artist_offset+42]
-            self.song_artist.configure(text=display)
+        cx, cy = self.cx, self.cy
+        t = self.phase
 
-        self.after(500, self.update_progress_loop)
-    
-    def show_player(self, title, artist, url, video_id=None):
-        colors = theme_manager.get_colors()
-        self.current_song = {"title": title, "artist": artist, "url": url}
-        self.full_title = title
-        self.full_artist = artist
-        self.title_offset = 0
-        self.artist_offset = 0
-        self.song_title.configure(text=title if len(title) <= 38 else title[:38], text_color=colors["text_primary"])
-        self.song_artist.configure(text="Loading stream...", text_color=colors["text_secondary"])
-        self.album_art.configure(image=None, text="🎵")
-        self.btn_play.configure(text="⏸")
-        self.is_playing = True
-        self.pack(fill="x", before=self.master.input_row if hasattr(self.master, 'input_row') else None)
-        
-        # Load stream in background
-        threading.Thread(target=self._load_stream, args=(url, artist, video_id), daemon=True).start()
-        
-    def _load_stream(self, url, artist, video_id):
-        if video_id:
-            try:
-                from ytmusicapi import YTMusic
-                yt = YTMusic()
-                data = yt.get_watch_playlist(videoId=video_id)
-                self.playlist_queue = data.get("tracks", [])
-                self.current_idx = 0
-            except:
-                pass
+        for l in self._layers:
+            base_r = self.S / 2 * l["r_frac"]
+            po, fr = l["phase_off"], l["freq"]
 
-        try:
-            ydl_opts = {'format': 'bestaudio/best', 'quiet': True, 'no_warnings': True}
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                audio_url = info['url']
-                thumbnail_url = info.get('thumbnail')
-                
-                if thumbnail_url:
-                    response = requests.get(thumbnail_url)
-                    img = Image.open(BytesIO(response.content))
-                    ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(60, 60))
-                    self.album_art.configure(image=ctk_img, text="")
-                
-                media = self.vlc_instance.media_new(audio_url)
-                self.player.set_media(media)
-                self.player.play()
-                self.full_artist = artist
-                self.artist_offset = 0
-                self.song_artist.configure(text=artist if len(artist) <= 42 else artist[:42])
-        except Exception as e:
-            self.full_artist = f"Error loading: {e}"
-            self.song_artist.configure(text=self.full_artist)
-    
-    def hide_player(self):
-        self.pack_forget()
-        self.is_playing = False
-        self.current_song = None
-        self.player.stop()
-        self.playlist_queue = []
-    
-    def toggle_play(self):
-        if self.is_playing:
-            self.btn_play.configure(text="▶")
-            self.player.pause()
-            self.is_playing = False
-        else:
-            self.btn_play.configure(text="⏸")
-            self.player.play()
-            self.is_playing = True
-    
-    def prev_song(self):
-        if self.playlist_queue and self.current_idx > 0:
-            self.current_idx -= 1
-            self._play_queue_track()
-        else:
-            time_ms = self.player.get_time()
-            self.player.set_time(max(0, time_ms - 10000))
-    
-    def next_song(self):
-        if self.playlist_queue and self.current_idx + 1 < len(self.playlist_queue):
-            self.current_idx += 1
-            self._play_queue_track()
-        else:
-            time_ms = self.player.get_time()
-            self.player.set_time(time_ms + 10000)
+            n = (math.sin(t*fr*1.7 + po)*0.55
+               + math.sin(t*fr*3.1 + po*1.3)*0.26
+               + math.cos(t*fr*1.2 + po*0.8)*0.19)
+            rx = base_r * (1 + n * self.amp * 0.55)
+            ry = base_r * (1 + n * self.amp * 0.36)
 
-    def _play_queue_track(self):
-        self.player.stop()
-        track = self.playlist_queue[self.current_idx]
-        title = track.get("title", 'Unknown')
-        artist = ", ".join([a.get("name", "") for a in track.get("artists", [])])
-        video_id = track.get("videoId")
-        self.full_title = title
-        self.title_offset = 0
-        self.full_artist = artist
-        self.artist_offset = 0
-        
-        self.song_title.configure(text=title if len(title) <= 38 else title[:38])
-        self.song_artist.configure(text="Loading stream...")
-        threading.Thread(target=self._load_stream, args=(url, artist, None), daemon=True).start()
-    
-    def update_theme(self):
-        colors = theme_manager.get_colors()
-        self.player_container.configure(fg_color=colors["bg_tertiary"])
-        self.album_art.configure(fg_color=colors["bg_hover"], text_color=colors["text_muted"])
-        self.song_title.configure(text_color=colors["text_primary"])
-        self.song_artist.configure(text_color=colors["text_secondary"])
-        self.current_time.configure(text_color=colors["text_muted"])
-        self.total_time.configure(text_color=colors["text_muted"])
-        self.btn_play.configure(fg_color=colors["accent"], hover_color=colors["accent_hover"])
-        self.btn_prev.configure(text_color=colors["text_primary"])
-        self.btn_next.configure(text_color=colors["text_primary"])
-        self.progress_slider.configure(fg_color=colors["bg_hover"], progress_color=colors["accent"])
-        self.vol_slider.configure(fg_color=colors["bg_hover"], progress_color=colors["text_muted"], button_color=colors["text_muted"], button_hover_color=colors["text_primary"])
+            cidx  = (l["color_idx"] + int(t * 0.22)) % len(ORB_COLORS)
+            color = ORB_COLORS[cidx]
+            if l["filled"]:
+                self.cv.itemconfig(l["id"], fill=color)
+            else:
+                self.cv.itemconfig(l["id"], outline=color)
+            self.cv.coords(l["id"], cx-rx, cy-ry, cx+rx, cy+ry)
 
+        # Glint
+        inner_r = self.S / 2 * 0.42
+        gr  = 7 + self.amp * 5
+        gx  = cx - inner_r * 0.38
+        gy  = cy - inner_r * 0.44
+        alp = int(55 + self.amp * 115)
+        alp = max(0, min(255, alp))
+        self.cv.itemconfig(self._glint, fill=f"#{alp:02x}{alp:02x}{alp:02x}")
+        self.cv.coords(self._glint, gx-gr, gy-gr, gx+gr, gy+gr)
+
+
+# ─── MAIN WINDOW ──────────────────────────────────────────────
 class MiraApp(ctk.CTk):
+    W = 480
+    H = 215
+
     def __init__(self):
         super().__init__()
-
-        self.title("Mira Assistant")
-        self.width = 580
-        self.height = 200
-        self.attributes('-topmost', True)
+        ctk.set_appearance_mode("dark")
+        self.title("Mira")
         self.overrideredirect(True)
-        
-        self.apply_theme()
-        
-        screen_width = self.winfo_screenwidth()
-        screen_height = self.winfo_screenheight()
+        self.attributes("-topmost", True)
+        self.withdraw()
 
-        self.x_pos = (screen_width - self.width) // 2
-        self.target_y = screen_height - self.height - 100
-        self.hidden_y = screen_height + 50
+        self.anim_state = "Waiting"
+        self.active     = False
+        self.visible    = False
+        self.sliding    = False
+        self.vel        = 0.0
+        self._dragging  = False
+        self._dx = self._dy = 0
 
-        self.current_y = self.hidden_y
-        self.geometry(f'{self.width}x{self.height}+{self.x_pos}+{self.current_y}')
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        self.X        = (sw - self.W) // 2
+        self.tgt_y    = sh - self.H - 60
+        self.hidden_y = self.tgt_y + 40
+        self.cur_y    = self.hidden_y
+
+        self.geometry(f"{self.W}x{self.H}+{self.X}+{int(self.cur_y)}")
 
         try:
             pywinstyles.apply_style(self, "transparent")
-        except:
+        except Exception:
             pass
 
-        # Main container
-        self.border_frame = ctk.CTkFrame(
-            self, fg_color=theme_manager.get_colors()["bg_secondary"],
-            border_width=0, corner_radius=20
+        self._build()
+        self._pump()
+        self._tick()
+
+    # ── BUILD ────────────────────────────────────────────
+    def _build(self):
+        self.configure(fg_color="#0D0D10")
+
+        # Dark frosted card — matches screenshot exactly
+        self.card = ctk.CTkFrame(
+            self,
+            fg_color="#1C1C1F",
+            corner_radius=20,
+            border_width=1,
+            border_color="#3A3A3C",
         )
-        self.border_frame.pack(fill="both", expand=True, padx=2, pady=2)
+        self.card.pack(fill="both", expand=True, padx=1, pady=1)
 
-        # Top section
-        self.top_section = ctk.CTkFrame(self.border_frame, fg_color="transparent")
-        self.top_section.pack(fill="both", expand=True, padx=25, pady=(20, 10))
+        # Drag handle
+        for w in [self.card]:
+            w.bind("<ButtonPress-1>",   self._drag_start)
+            w.bind("<B1-Motion>",       self._drag_do)
+            w.bind("<ButtonRelease-1>", self._drag_end)
 
-        # Waveform
-        self.wave_frame = ctk.CTkFrame(self.top_section, fg_color="transparent", width=240)
-        self.wave_frame.pack(side="left", fill="y", padx=(0, 25))
-        self.wave_frame.pack_propagate(False)
+        # ── TOP ROW: Orb + State/Response ──
+        top = ctk.CTkFrame(self.card, fg_color="transparent")
+        top.pack(fill="x", padx=18, pady=(14, 0))
+        top.bind("<ButtonPress-1>",   self._drag_start)
+        top.bind("<B1-Motion>",       self._drag_do)
+        top.bind("<ButtonRelease-1>", self._drag_end)
 
-        self.wave_canvas = tk.Canvas(
-            self.wave_frame, width=240, height=90,
-            bg=theme_manager.get_colors()["bg_secondary"], highlightthickness=0
+        # Siri orb
+        self.orb_cv = tk.Canvas(
+            top, width=110, height=110,
+            bg="#1C1C1F", highlightthickness=0,
         )
-        self.wave_canvas.place(relx=0.5, rely=0.5, anchor="center")
-        self.waveform = WaveformAnimation(self.wave_canvas)
+        self.orb_cv.pack(side="left", padx=(0, 4))
+        self.orb = SiriOrb(self.orb_cv, 110)
 
-        # Right column
-        self.right_col = ctk.CTkFrame(self.top_section, fg_color="transparent")
-        self.right_col.pack(side="left", fill="both", expand=True)
+        # Text area right of orb
+        txt_box = ctk.CTkFrame(top, fg_color="transparent")
+        txt_box.pack(side="left", fill="both", expand=True, padx=(10, 0))
+        txt_box.bind("<ButtonPress-1>",   self._drag_start)
+        txt_box.bind("<B1-Motion>",       self._drag_do)
+        txt_box.bind("<ButtonRelease-1>", self._drag_end)
 
-        # Status label
-        self.status_label = ctk.CTkLabel(
-            self.right_col, text="Waiting...",
+        # State label — "Waiting…" bold white
+        self.lbl_state = ctk.CTkLabel(
+            txt_box,
+            text="Waiting…",
             font=("SF Pro Display", 22, "bold"),
-            text_color=theme_manager.get_colors()["text_primary"]
+            text_color="#F5F5F7",
+            anchor="w",
         )
-        self.status_label.pack(anchor="w", pady=(0, 6))
+        self.lbl_state.pack(anchor="w", pady=(16, 0))
+        self.lbl_state.bind("<ButtonPress-1>",   self._drag_start)
+        self.lbl_state.bind("<B1-Motion>",       self._drag_do)
 
-        # Live transcript
-        self.live_transcript = ctk.CTkLabel(
-            self.right_col, text='"Online."',
+        # Response / transcript — grey, italic feel
+        self.lbl_resp = ctk.CTkLabel(
+            txt_box,
+            text="",
             font=("SF Pro Display", 14),
-            text_color=theme_manager.get_colors()["text_secondary"],
-            wraplength=300, justify="left"
+            text_color="#AEAEB2",
+            wraplength=270,
+            justify="left",
+            anchor="w",
         )
-        self.live_transcript.pack(anchor="w", pady=(0, 15))
+        self.lbl_resp.pack(anchor="w", pady=(4, 0))
+        self.lbl_resp.bind("<ButtonPress-1>",   self._drag_start)
+        self.lbl_resp.bind("<B1-Motion>",       self._drag_do)
 
-        # Input row
-        self.input_row = ctk.CTkFrame(self.right_col, fg_color="transparent")
-        self.input_row.pack(fill="x", side="bottom")
+        # ── SEPARATOR ──
+        ctk.CTkFrame(self.card, height=1, fg_color="#2C2C2E").pack(
+            fill="x", padx=18, pady=(12, 0)
+        )
 
-        # Text entry
-        self.text_entry = ctk.CTkEntry(
-            self.input_row, height=42, placeholder_text="Type or Speak...",
-            border_width=0, corner_radius=21,
+        # ── BOTTOM ROW: entry + cog + search ──
+        self.bot = ctk.CTkFrame(self.card, fg_color="transparent")
+        self.bot.pack(fill="x", padx=12, pady=(10, 10))
+
+        self.entry = ctk.CTkEntry(
+            self.bot,
+            height=40,
+            placeholder_text="Type or Speak…",
+            border_width=1,
+            border_color="#3A3A3C",
+            corner_radius=20,
             font=("SF Pro Display", 14),
-            fg_color=theme_manager.get_colors()["bg_tertiary"],
-            text_color=theme_manager.get_colors()["text_primary"],
-            placeholder_text_color=theme_manager.get_colors()["text_muted"]
+            fg_color="#2C2C2E",
+            text_color="#F5F5F7",
+            placeholder_text_color="#636366",
         )
-        self.text_entry.pack(side="left", fill="x", expand=True, padx=(0, 12))
-        self.text_entry.bind("<Return>", self.submit_text)
+        self.entry.pack(side="left", fill="x", expand=True)
+        self.entry.bind("<Return>", self._on_enter)
 
-        # Tools frame
-        self.tools_frame = ctk.CTkFrame(
-            self.input_row, fg_color=theme_manager.get_colors()["bg_tertiary"],
-            height=42, corner_radius=21, border_width=0
-        )
-        self.tools_frame.pack(side="right")
+        # Cog
+        ctk.CTkButton(
+            self.bot, text="⚙",
+            width=40, height=40, corner_radius=20,
+            fg_color="#2C2C2E", hover_color="#3A3A3C",
+            border_width=1, border_color="#3A3A3C",
+            font=("SF Pro Display", 17),
+            text_color="#8E8E93",
+            command=self._settings,
+        ).pack(side="left", padx=(8, 0))
 
-        # Theme toggle button
-        self.btn_theme = ctk.CTkButton(
-            self.tools_frame, text="", width=36, height=42,
-            corner_radius=21, fg_color="transparent",
-            hover_color=theme_manager.get_colors()["bg_hover"],
-            font=("SF Pro Display", 16),
-            text_color=theme_manager.get_colors()["text_primary"],
-            command=self.toggle_theme
-        )
-        self.btn_theme.pack(side="left", padx=(2, 0))
+        # Search (🔍 → magnifier icon)
+        ctk.CTkButton(
+            self.bot, text="⌕",
+            width=40, height=40, corner_radius=20,
+            fg_color="#2C2C2E", hover_color="#3A3A3C",
+            border_width=1, border_color="#3A3A3C",
+            font=("SF Pro Display", 18),
+            text_color="#8E8E93",
+            command=self._search,
+        ).pack(side="left", padx=(6, 0))
 
-        # Separator
-        ctk.CTkFrame(self.tools_frame, width=1, height=20, fg_color=theme_manager.get_colors()["separator"]).pack(side="left", pady=11, padx=4)
-
-        # Settings button
-        self.btn_settings = ctk.CTkButton(
-            self.tools_frame, text="⚙️", width=36, height=42,
-            corner_radius=21, fg_color="transparent",
-            hover_color=theme_manager.get_colors()["bg_hover"],
-            font=("SF Pro Display", 16),
-            text_color=theme_manager.get_colors()["text_primary"],
-            command=self.open_settings
-        )
-        self.btn_settings.pack(side="left", padx=(0, 4))
-
-        # Separator
-        ctk.CTkFrame(self.tools_frame, width=1, height=20, fg_color=theme_manager.get_colors()["separator"]).pack(side="left", pady=11, padx=4)
-
-        # Microphone button
-        self.btn_mic = ctk.CTkButton(
-            self.tools_frame, text="🎤", width=36, height=42,
-            corner_radius=21, fg_color="transparent",
-            hover_color=theme_manager.get_colors()["bg_hover"],
-            font=("SF Pro Display", 16),
-            text_color=theme_manager.get_colors()["text_primary"],
-            command=self.toggle_mic
-        )
-        self.btn_mic.pack(side="left", padx=(0, 2))
-
-        # Music Player (Integrated)
-        self.music_player = MusicPlayerFrame(self.border_frame, fg_color="transparent")
+        # ── MEDIA CONTROLS ROW ──
+        self.media_row = ctk.CTkFrame(self.card, fg_color="#2C2C2E", corner_radius=10, height=44)
         
-        # Bottom separator
-        self.status_sep = ctk.CTkFrame(
-            self.border_frame, height=1,
-            fg_color=theme_manager.get_colors()["separator"]
+        self.lbl_thumb = ctk.CTkLabel(self.media_row, text="", width=36, height=36, corner_radius=4, fg_color="#1C1C1F")
+        self.lbl_thumb.pack(side="left", padx=(6, 2), pady=4)
+        
+        self.btn_prev = ctk.CTkButton(self.media_row, text="⏮", width=40, height=30, fg_color="transparent", hover_color="#3A3A3C", command=lambda: self._media_cmd("previous track"))
+        self.btn_prev.pack(side="left", padx=5, pady=5)
+        
+        self.btn_play = ctk.CTkButton(self.media_row, text="⏯", width=40, height=30, fg_color="transparent", hover_color="#3A3A3C", command=lambda: self._media_cmd("play/pause media"))
+        self.btn_play.pack(side="left", padx=5, pady=5)
+        
+        self.btn_next = ctk.CTkButton(self.media_row, text="⏭", width=40, height=30, fg_color="transparent", hover_color="#3A3A3C", command=lambda: self._media_cmd("next track"))
+        self.btn_next.pack(side="left", padx=5, pady=5)
+        
+        self.btn_vup = ctk.CTkButton(self.media_row, text="🔊", width=30, height=30, fg_color="transparent", hover_color="#3A3A3C", command=lambda: self._media_cmd("volume up"))
+        self.btn_vup.pack(side="right", padx=(5, 5), pady=5)
+        
+        self.btn_vdown = ctk.CTkButton(self.media_row, text="🔉", width=30, height=30, fg_color="transparent", hover_color="#3A3A3C", command=lambda: self._media_cmd("volume down"))
+        self.btn_vdown.pack(side="right", padx=(5, 2), pady=5)
+
+        self.lbl_now_playing = ctk.CTkLabel(self.media_row, text="", font=("SF Pro Display", 13), text_color="#F5F5F7", anchor="w")
+        self.lbl_now_playing.pack(side="left", padx=10, fill="x", expand=True)
+
+        # ── SUGGESTIONS ROW ──
+        self.sug_frame = ctk.CTkFrame(self.card, fg_color="transparent")
+        self.sug_frame.bind("<ButtonPress-1>", self._drag_start)
+        self.sug_frame.bind("<B1-Motion>", self._drag_do)
+        self.sug_frame.bind("<ButtonRelease-1>", self._drag_end)
+
+        # ── STATUS BAR ──
+        self.bar = ctk.CTkFrame(self.card, fg_color="transparent")
+        self.bar.pack(fill="x", padx=18, pady=(0, 10))
+        self.bar.bind("<ButtonPress-1>",   self._drag_start)
+        self.bar.bind("<B1-Motion>",       self._drag_do)
+        self.bar.bind("<ButtonRelease-1>", self._drag_end)
+
+        ctk.CTkLabel(
+            self.bar, text="Mira Status:  ",
+            font=("SF Pro Display", 11),
+            text_color="#48484A",
+        ).pack(side="left")
+
+        self.lbl_status = ctk.CTkLabel(
+            self.bar, text="Idle",
+            font=("SF Pro Display", 11),
+            text_color="#636366",
         )
-        self.status_sep.pack(fill="x", side="bottom", padx=25, pady=(0, 8))
+        self.lbl_status.pack(side="left")
 
-        # Bottom status bar
-        self.bottom_bar = ctk.CTkFrame(self.border_frame, fg_color="transparent", height=25)
-        self.bottom_bar.pack(fill="x", side="bottom", padx=25, pady=(0, 12))
-
-        self.bottom_status_title = ctk.CTkLabel(
-            self.bottom_bar, text="Mira Status:  ",
-            font=("SF Pro Display", 12),
-            text_color=theme_manager.get_colors()["text_muted"]
-        )
-        self.bottom_status_title.pack(side="left")
-
-        self.bottom_status_text = ctk.CTkLabel(
-            self.bottom_bar, text="Ready",
-            font=("SF Pro Display", 12),
-            text_color=theme_manager.get_colors()["text_muted"]
-        )
-        self.bottom_status_text.pack(side="left")
-
-        self.star_icon = ctk.CTkLabel(
-            self.bottom_bar, text="✨",
+        # Sparkle ✦ bottom right
+        ctk.CTkLabel(
+            self.bar, text="✦",
             font=("SF Pro Display", 14),
-            text_color=theme_manager.get_colors()["text_muted"]
-        )
-        self.star_icon.pack(side="right")
+            text_color="#5E5CE6",
+        ).pack(side="right", padx=(0, 15))
 
-        # Animation state
-        self.animation_state = "Waiting"
-        self.session_active = False
-        self.is_visible = False
-        self.animating_slide = False
-        self.spring_velocity = 0.0
+        # Sizegrip (resize handle)
+        self.sizegrip = ctk.CTkLabel(self.card, text="↘", font=("SF Pro Display", 18), text_color="#3A3A3C", cursor="sizing")
+        self.sizegrip.place(relx=1.0, rely=1.0, anchor="se", x=-2, y=-2)
+        self.sizegrip.bind("<ButtonPress-1>", self._resize_start)
+        self.sizegrip.bind("<B1-Motion>", self._resize_do)
+        self.sizegrip.bind("<ButtonRelease-1>", self._resize_end)
 
-        # Enable Dragging
-        self.drag_start_x = 0
-        self.drag_start_y = 0
-        for widget in [self, self.border_frame, self.top_section, self.right_col]:
-            widget.bind("<Button-1>", self.start_move)
-            widget.bind("<B1-Motion>", self.do_move)
+    # ── DRAG ────────────────────────────────────────────
+    def _drag_start(self, e):
+        self._dragging = True
+        self._dx, self._dy = e.x, e.y
 
-        self.check_queue()
-        self.update_waveform()
-        self.withdraw()
-
-    def start_move(self, event):
-        self.drag_start_x = event.x
-        self.drag_start_y = event.y
-
-    def do_move(self, event):
-        delta_x = event.x - self.drag_start_x
-        delta_y = event.y - self.drag_start_y
-        self.x_pos = self.winfo_x() + delta_x
-        self.current_y = self.winfo_y() + delta_y
-        self.target_y = self.current_y
-        self.geometry(f"+{self.x_pos}+{self.current_y}")
-
-    def apply_theme(self):
-        """Apply current theme colors"""
-        colors = theme_manager.get_colors()
-        self.configure(fg_color=colors["bg_primary"])
-    
-    def toggle_theme(self):
-        """Toggle between dark and light theme"""
-        theme_manager.toggle_theme()
-        self.apply_theme()
-        self.update_all_colors()
-        
-        # Update theme button icon
-        if theme_manager.current_theme == "dark":
-            self.btn_theme.configure(text="🌙")
-        else:
-            self.btn_theme.configure(text="☀️")
-    
-    def update_all_colors(self):
-        """Update all UI element colors"""
-        colors = theme_manager.get_colors()
-        
-        # Update main frames
-        self.border_frame.configure(fg_color=colors["bg_secondary"])
-        self.wave_canvas.configure(bg=colors["bg_secondary"])
-        
-        # Update labels
-        self.status_label.configure(text_color=colors["text_primary"])
-        self.live_transcript.configure(text_color=colors["text_secondary"])
-        
-        # Update entry
-        self.text_entry.configure(
-            fg_color=colors["bg_tertiary"],
-            text_color=colors["text_primary"],
-            placeholder_text_color=colors["text_muted"]
-        )
-        
-        # Update tools
-        self.tools_frame.configure(fg_color=colors["bg_tertiary"])
-        
-        # Update separators
-        for widget in self.tools_frame.winfo_children():
-            if isinstance(widget, ctk.CTkFrame) and widget.cget("width") == 1:
-                widget.configure(fg_color=colors["separator"])
-        
-        # Update bottom bar
-        self.status_sep.configure(fg_color=colors["separator"])
-        self.bottom_status_title.configure(text_color=colors["text_muted"])
-        self.bottom_status_text.configure(text_color=colors["text_muted"])
-        self.star_icon.configure(text_color=colors["text_muted"])
-        
-        # Update music player
-        if hasattr(self, 'music_player'):
-            self.music_player.update_theme()
-        
-        # Update waveform colors
-        if hasattr(self, 'waveform'):
-            self.waveform.update_colors()
-
-    def open_settings(self):
-        msg_queue.put({"type": "STATUS", "text": "Opening settings..."})
-    
-    def toggle_mic(self):
-        if self.animation_state == "Listening":
-            self.animation_state = "Waiting"
-        else:
-            self.animation_state = "Listening"
-            msg_queue.put({"type": "STATUS", "text": "Listening..."})
-
-    def slide_animation(self):
-        if not self.animating_slide:
+    def _drag_do(self, e):
+        if not self._dragging:
             return
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        nx = max(0, min(self.winfo_x() + e.x - self._dx, sw - self.W))
+        ny = max(0, min(self.winfo_y() + e.y - self._dy, sh - self.H))
+        self.X = nx
+        self.tgt_y = ny
+        self.cur_y = ny
+        self.geometry(f"+{self.X}+{int(self.cur_y)}")
 
-        target = self.target_y if self.is_visible else self.hidden_y
-        stiffness, damping = 0.15, 0.75
+    def _drag_end(self, e):
+        self._dragging = False
 
-        force = (target - self.current_y) * stiffness
-        self.spring_velocity = (self.spring_velocity + force) * damping
-        self.current_y += self.spring_velocity
+    def _resize_start(self, e):
+        self._resizing = True
+        self._rx = e.x_root
+        self._ry = e.y_root
+        self._start_W = self.W
+        self._start_H = self.H
 
-        if abs(target - self.current_y) < 0.5 and abs(self.spring_velocity) < 0.5:
-            self.current_y = target
-            self.geometry(f'{self.width}x{self.height}+{self.x_pos}+{int(self.current_y)}')
-            self.animating_slide = False
-            if not self.is_visible:
+    def _resize_do(self, e):
+        if not getattr(self, '_resizing', False): return
+        dx = e.x_root - self._rx
+        dy = e.y_root - self._ry
+        self.W = max(350, self._start_W + dx)
+        self.H = max(200, self._start_H + dy)
+        self.geometry(f"{self.W}x{self.H}")
+
+    def _resize_end(self, e):
+        self._resizing = False
+
+    def _media_cmd(self, action):
+        import keyboard
+        keyboard.send(action)
+
+    def show_media(self, msg):
+        text = msg.get("text", "")
+        self.lbl_now_playing.configure(text=text[:35] + ("…" if len(text) > 35 else ""))
+        
+        url = msg.get("thumb")
+        if url:
+             threading.Thread(target=self._load_image_to_label, args=(url, self.lbl_thumb, (36, 36)), daemon=True).start()
+             
+        if "suggestions" in msg:
+            sugs = msg["suggestions"]
+            for widget in self.sug_frame.winfo_children():
+                widget.destroy()
+                
+            if sugs:
+                ctk.CTkLabel(self.sug_frame, text="Suggested", font=("SF Pro Display", 11, "bold"), text_color="#AEAEB2", anchor="w").pack(fill="x", padx=18, pady=(0,4))
+                for sug in sugs:
+                    s_row = ctk.CTkFrame(self.sug_frame, fg_color="#2C2C2E", corner_radius=8, height=44)
+                    s_row.pack(fill="x", pady=2, padx=18)
+                    
+                    s_thumb = ctk.CTkLabel(s_row, text="", width=32, height=32, corner_radius=4, fg_color="#1C1C1F")
+                    s_thumb.pack(side="left", padx=(6, 4), pady=4)
+                    
+                    s_name = ctk.CTkLabel(s_row, text=sug["title"][:50], font=("SF Pro Display", 12), text_color="#F5F5F7", anchor="w")
+                    s_name.pack(side="left", padx=8, expand=True, fill="x")
+                    
+                    cb = lambda e, s=sug: text_command_queue.put(f"?play_sug:{s['videoId']}|{s['title']}|{s['thumb']}")
+                    s_row.bind("<Button-1>", cb)
+                    s_thumb.bind("<Button-1>", cb)
+                    s_name.bind("<Button-1>", cb)
+                    
+                    if sug.get("thumb"):
+                        threading.Thread(target=self._load_image_to_label, args=(sug["thumb"], s_thumb, (32, 32)), daemon=True).start()
+
+        if not self.sug_frame.winfo_ismapped():
+            self.sug_frame.pack(fill="x", pady=(0, 10), before=self.bar)
+
+        if not self.media_row.winfo_ismapped():
+            self.media_row.pack(fill="x", padx=18, pady=(0, 10), before=self.sug_frame)
+            
+        if self.H < 440:
+            self.H = 440
+            self.geometry(f"{self.W}x{self.H}")
+                
+    def _load_image_to_label(self, url, lbl, size=(36, 36)):
+        try:
+            from PIL import Image
+            from io import BytesIO
+            import requests
+            r = requests.get(url, timeout=5)
+            img = Image.open(BytesIO(r.content)).resize(size, Image.LANCZOS)
+            photo = ctk.CTkImage(light_image=img, dark_image=img, size=size)
+            self.after(0, lambda: lbl.configure(image=photo))
+        except Exception:
+            pass
+
+    # ── ACTIONS ─────────────────────────────────────────
+    def _on_enter(self, _=None):
+        cmd = self.entry.get().strip()
+        if not cmd:
+            return
+        self.entry.delete(0, "end")
+        self.lbl_resp.configure(text=f'"{cmd}"')
+        self.lbl_state.configure(text="Processing…", text_color="#F5F5F7")
+        self._set_status("Processing…", "#FF9F0A")
+        self.anim_state = "Processing"
+        text_command_queue.put(cmd)
+
+    def _search(self):
+        q = self.entry.get().strip()
+        if q:
+            self.entry.delete(0, "end")
+            webbrowser.open(
+                f"https://www.google.com/search?q={requests.utils.quote(q)}"
+            )
+            self.lbl_state.configure(text="Searching…", text_color="#F5F5F7")
+            self.lbl_resp.configure(text=f'"{q}"')
+            self._set_status(f'Google: {q[:36]}', "#30D158")
+        else:
+            webbrowser.open("https://www.google.com")
+            self._set_status("Opened Google", "#30D158")
+
+    def _settings(self):
+        self._set_status("Settings — coming soon", "#636366")
+
+    def _set_status(self, text, color="#636366"):
+        self.lbl_status.configure(text=text, text_color=color)
+
+    # ── SHOW / HIDE / SLIDE ─────────────────────────────
+    def show(self):
+        self.hidden_y = self.tgt_y + 40
+        self.cur_y = self.hidden_y
+        self.deiconify()
+        self.attributes("-topmost", True)
+        self.visible = True
+        self.sliding = True
+        self._slide()
+
+    def hide(self):
+        self.hidden_y = self.tgt_y + 40
+        self.visible = False
+        self.sliding = True
+        self._slide()
+
+    def toggle(self):
+        if self.visible:
+            self.hide()
+        else:
+            self.show()
+
+    def _slide(self):
+        if not self.sliding:
+            return
+        tgt = self.tgt_y if self.visible else self.hidden_y
+        self.vel = (self.vel + (tgt - self.cur_y) * 0.18) * 0.68
+        self.cur_y += self.vel
+        if abs(tgt - self.cur_y) < 0.5 and abs(self.vel) < 0.5:
+            self.cur_y = tgt
+            self.vel   = 0
+            self.sliding = False
+            self.geometry(f"{self.W}x{self.H}+{self.X}+{int(self.cur_y)}")
+            if not self.visible:
                 self.withdraw()
             return
+        self.geometry(f"{self.W}x{self.H}+{self.X}+{int(self.cur_y)}")
+        self.after(14, self._slide)
 
-        self.geometry(f'{self.width}x{self.height}+{self.x_pos}+{int(self.current_y)}')
-        self.after(16, self.slide_animation)
-
-    def toggle_visibility(self):
-        if not self.is_visible:
-            self.deiconify()
-            self.attributes('-topmost', True)
-            self.is_visible = True
-            self.animating_slide = True
-            self.slide_animation()
-            self.status_label.configure(text="Waiting...")
-            self.bottom_status_text.configure(text="Ready", text_color=theme_manager.get_colors()["text_muted"])
-        else:
-            self.is_visible = False
-            self.animating_slide = True
-            self.slide_animation()
-
-    def update_waveform(self):
-        if self.is_visible:
-            self.waveform.update(self.animation_state)
-        self.after(30, self.update_waveform)
-
-    def submit_text(self, event=None):
-        cmd = self.text_entry.get().strip()
-        if cmd:
-            self.text_entry.delete(0, "end")
-            self.live_transcript.configure(text=f'"{cmd}"')
-            self.status_label.configure(text="Processing...")
-            self.animation_state = "Processing"
-            text_command_queue.put(cmd)
-
-    def show_music_player(self, title, artist, url, video_id=None):
-        """Show integrated music player"""
-        if hasattr(self, 'music_player'):
-            self.music_player.show_player(title, artist, url, video_id)
-            # Adjust window height to accommodate player
-            self.height = 420  # Increased height for music player
-            self.target_y = self.winfo_screenheight() - self.height - 100
-            if self.is_visible:
-                self.geometry(f'{self.width}x{self.height}+{self.x_pos}+{self.current_y}')
-
-    def check_queue(self):
+    # ── QUEUE PUMP ──────────────────────────────────────
+    def _pump(self):
         try:
             while True:
                 msg = msg_queue.get_nowait()
-                if msg["type"] == "SHOW":
-                    if not self.is_visible:
-                        self.toggle_visibility()
-                    self.live_transcript.configure(text="")
-                    self.animation_state = "Waiting"
-                elif msg["type"] == "STATUS":
-                    self.status_label.configure(text=msg["text"])
-                    self.bottom_status_text.configure(text=msg["text"], text_color=theme_manager.get_colors()["text_secondary"])
-                    if "Listening" in msg["text"]:
-                        self.animation_state = "Listening"
-                    elif "Processing" in msg["text"] or "Thinking" in msg["text"]:
-                        self.animation_state = "Processing"
-                    elif "Speaking" in msg["text"]:
-                        self.animation_state = "Speaking"
-                    elif "Waiting" in msg["text"]:
-                        self.animation_state = "Waiting"
-                    elif "Error" in msg["text"]:
-                        self.bottom_status_text.configure(
-                            text="Error Communicating with Gemini",
-                            text_color=theme_manager.get_colors()["error"]
-                        )
-                elif msg["type"] == "LOG":
-                    clean_text = msg["text"].replace("Mira: ", "").replace("You (Voice): ", "").replace("You (Typed): ", "")
-                    if "Gemini Error" in msg["text"] or "Error:" in msg["text"]:
-                        self.bottom_status_text.configure(
-                            text="Error Communicating with Gemini",
-                            text_color=theme_manager.get_colors()["error"]
-                        )
-                        self.status_label.configure(text="Error")
-                        self.animation_state = "Waiting"
-                    elif "Mira:" in msg["text"]:
-                        self.status_label.configure(text="Mira")
-                        self.live_transcript.configure(text=f'"{clean_text}"')
-                        self.animation_state = "Speaking"
+                t   = msg["type"]
+
+                if t == "SHOW":
+                    if not self.visible:
+                        self.show()
+                    self.lbl_resp.configure(text="")
+
+                elif t == "STATUS":
+                    txt = msg["text"]
+                    self.lbl_state.configure(text=txt, text_color="#F5F5F7")
+                    col_map = {
+                        "Listening": "#30D158", "Speaking": "#5E5CE6",
+                        "Processing": "#FF9F0A", "Thinking": "#FF9F0A",
+                    }
+                    col = next((v for k, v in col_map.items() if k in txt), "#636366")
+                    self._set_status(txt, col)
+                    st_map = {
+                        "Listening": "Listening", "Processing": "Processing",
+                        "Thinking":  "Processing", "Speaking":  "Speaking",
+                    }
+                    self.anim_state = next(
+                        (v for k, v in st_map.items() if k in txt), "Waiting"
+                    )
+
+                elif t == "LOG":
+                    raw = msg["text"]
+                    if "Error" in raw:
+                        clean = raw.replace("Mira: ", "").replace("Error: ", "")
+                        self.lbl_state.configure(
+                            text="Error Communicating", text_color="#FF453A")
+                        self._set_status(
+                            f"Error Communicating with AI", "#FF453A")
+                        self.anim_state = "Waiting"
+                    elif raw.startswith("Mira:"):
+                        clean = raw[5:].strip()
+                        if clean:
+                            self.lbl_state.configure(
+                                text="Mira", text_color="#F5F5F7")
+                            self.lbl_resp.configure(text=f'"{clean}"')
+                        self._set_status("Speaking…", "#5E5CE6")
+                        self.anim_state = "Speaking"
                     else:
-                        self.live_transcript.configure(text=f'"{clean_text}"')
-                elif msg["type"] == "MUSIC":
-                    self.show_music_player(msg["title"], msg["artist"], msg["url"], msg.get("video_id"))
-                elif msg["type"] == "HIDE":
-                    if self.is_visible:
-                        self.toggle_visibility()
+                        clean = raw.replace("You: ", "")
+                        self.lbl_resp.configure(text=f'"{clean}"')
+
+                elif t == "DONE":
+                    self.lbl_state.configure(text="Waiting…", text_color="#F5F5F7")
+                    self._set_status("Idle", "#636366")
+                    self.anim_state = "Waiting"
+
+                elif t == "HIDE":
+                    if self.visible:
+                        self.hide()
+
+                elif t == "MEDIA":
+                    self.show_media(msg)
+
         except queue.Empty:
             pass
         finally:
-            self.after(50, self.check_queue)
+            self.after(40, self._pump)
 
-def process_user_intent(command, app, speak):
-    if "hello" in command:
-        speak("Hello there! How can I help you today?")
-    elif "time" in command:
-        current_time = time.strftime("%I:%M %p")
-        speak(f"The current time is {current_time}.")
-    elif "play" in command:
-        song_query = command.replace("play", "").strip()
-        if song_query:
-            msg_queue.put({"type": "STATUS", "text": "Searching..."})
-            try:
-                yt = YTMusic()
-                search_results = yt.search(song_query, filter="songs")
-                if search_results:
-                    top_song = search_results[0]
-                    video_id = top_song.get("videoId")
-                    title = top_song.get("title", song_query)
-                    artists = ", ".join([artist.get("name", "") for artist in top_song.get("artists", [])])
-                    watch_url = f"https://music.youtube.com/watch?v={video_id}"
+    # ── ANIMATION ───────────────────────────────────────
+    def _tick(self):
+        if self.visible:
+            self.orb.animate(self.anim_state)
+        self.after(28, self._tick)
 
-                    speak(f"Playing {title} by {artists}.")
-                    msg_queue.put({
-                        "type": "MUSIC",
-                        "title": title,
-                        "artist": artists,
-                        "url": watch_url,
-                        "video_id": video_id
-                    })
-                    # Removed webbrowser.open(watch_url) to keep playback entirely native
-                else:
-                    speak("I couldn't find that song.")
-            except Exception as e:
-                msg_queue.put({"type": "LOG", "text": f"YTMusic API Error: {e}"})
-                speak("I had trouble with the music API.")
+
+# ─── BACKEND ──────────────────────────────────────────────────
+def process_intent(cmd, speak):
+    cmd_l = cmd.lower().strip()
+
+    if cmd_l.startswith("?play_sug:"):
+        _, details = cmd.split(":", 1)
+        parts = details.split("|", 2)
+        if len(parts) >= 3:
+            vid, ttl, thb = parts[0], parts[1], parts[2]
+            url = f"https://music.youtube.com/watch?v={vid}"
+            webbrowser.open(url)
+            msg_queue.put({"type": "MEDIA", "msg": {"text": ttl, "thumb": thb, "suggestions": []}})
+            speak(f"Playing {ttl}.")
+        return "CONTINUE"
+
+    if re.search(r'\b(hello|hi|hey)\b', cmd_l):
+        speak("Hey! I'm Mira. How can I help you?")
+
+    elif re.search(r'\btime\b', cmd_l):
+        speak(f"It's {time.strftime('%I:%M %p')} right now.")
+
+    elif re.search(r'\b(date|today)\b', cmd_l):
+        speak(f"Today is {time.strftime('%A, %B %d, %Y')}.")
+
+    elif re.search(r'\b(search|google|look up|find)\b', cmd_l):
+        q = re.sub(r'\b(search for|search|google|look up|find)\b', '', cmd_l).strip()
+        if q:
+            webbrowser.open(
+                f"https://www.google.com/search?q={requests.utils.quote(q)}"
+            )
+            speak(f"Searching Google for {q}.")
         else:
+            webbrowser.open("https://www.google.com")
+            speak("Opening Google.")
+
+    elif re.search(r'\b(open|go to|visit)\b', cmd_l):
+        q   = re.sub(r'\b(open|go to|visit)\b', '', cmd_l).strip()
+        url = (q if q.startswith("http")
+               else f"https://{q}" if "." in q
+               else f"https://www.google.com/search?q={requests.utils.quote(q)}")
+        webbrowser.open(url)
+        speak(f"Opening {q}.")
+
+    elif re.search(r'\b(play|music)\b', cmd_l):
+        q = re.sub(r'\b(play|music|listen to|listen)\b', '', cmd_l).strip()
+        if not q:
             speak("What would you like me to play?")
-    elif "goodbye" in command or "stop" in command:
-        speak("Goodbye! Call me if you need me.")
-        return "EXIT"
-    else:
-        msg_queue.put({"type": "STATUS", "text": "Thinking..."})
+            return "CONTINUE"
+        msg_queue.put({"type": "STATUS", "text": "Searching music…"})
         try:
-            if not ai_client:
-                speak("Please check your OpenRouter API key.")
+            results = YTMusic().search(q, filter="songs")
+            if results:
+                s   = results[0]
+                ttl = s.get("title", q)
+                art = ", ".join(a.get("name", "") for a in s.get("artists", []))
+                vid = s.get("videoId")
+                if vid:
+                    url = f"https://music.youtube.com/watch?v={vid}"
+                    webbrowser.open(url)
+                    
+                    thumb_url = ""
+                    thumbs = s.get("thumbnails", [])
+                    if thumbs:
+                        thumb_url = thumbs[-1].get("url", "")
+                        
+                    sugs = []
+                    for t in results[1:4]:
+                        t_vid = t.get("videoId")
+                        if not t_vid: continue
+                        t_th = t.get("thumbnails", [])
+                        t_tu = t_th[-1].get("url") if t_th else ""
+                        art_sug = ", ".join(a.get("name", "") for a in t.get("artists", []))
+                        s_ttl = f"{t.get('title', '')} • {art_sug}"
+                        sugs.append({"videoId": t_vid, "title": s_ttl, "thumb": t_tu})
+                        
+                    msg_queue.put({"type": "MEDIA", "msg": {"text": f"{ttl} • {art}", "thumb": thumb_url, "suggestions": sugs}})
+                    speak(f"Playing {ttl} by {art}.")
+                else:
+                    speak("Couldn't play that song on YouTube.")
             else:
-                response = ai_client.chat.completions.create(
-                    model="qwen/qwen-plus",
-                    messages=[
-                        {"role": "system", "content": "You are Mira, a helpful AI voice assistant. Answer concisely in 1 to 3 sentences."},
-                        {"role": "user", "content": command}
-                    ]
-                )
-                ai_response = response.choices[0].message.content.replace('*', '').replace('#', '')
-                speak(ai_response)
-        except Exception as e:
-            msg_queue.put({"type": "LOG", "text": f"AI Error: {e}"})
-            speak("I encountered an error communicating with the AI.")
+                speak("Couldn't find that song.")
+        except Exception:
+            speak("Had trouble reaching the music service.")
+
+    elif re.search(r'\b(clear|reset)\b', cmd_l):
+        CONVERSATION_HISTORY.clear()
+        speak("Conversation cleared.")
+
+    elif re.search(r'\b(stop|goodbye|bye|exit|quit)\b', cmd_l):
+        speak("Goodbye!")
+        return "EXIT"
+
+    else:
+        msg_queue.put({"type": "STATUS", "text": "Thinking…"})
+        reply = ai_chat(cmd)
+        speak(reply)
+
     return "CONTINUE"
 
-def listen_and_process(app):
+
+def session_loop(app):
+    import pyttsx3
     pythoncom.CoInitialize()
     engine = pyttsx3.init()
-    engine.setProperty('volume', 1.0)
+    engine.setProperty("volume", 1.0)
+    for v in engine.getProperty("voices"):
+        if "zira" in v.name.lower() or "female" in v.name.lower():
+            engine.setProperty("voice", v.id)
+            break
 
     def speak(text):
-        msg_queue.put({"type": "LOG", "text": f"Mira: {text}"})
-        print(f"Mira: {text}")
+        msg_queue.put({"type": "LOG",    "text": f"Mira: {text}"})
+        msg_queue.put({"type": "STATUS", "text": "Speaking…"})
         engine.say(text)
         engine.runAndWait()
+        msg_queue.put({"type": "DONE"})
 
     msg_queue.put({"type": "SHOW"})
     speak("Online.")
-    msg_queue.put({"type": "STATUS", "text": "Waiting..."})
 
     try:
-        while app.session_active:
+        while app.active:
             try:
-                typed_cmd = text_command_queue.get(timeout=0.2)
-                msg_queue.put({"type": "LOG", "text": f"You: {typed_cmd}"})
-                msg_queue.put({"type": "STATUS", "text": "Processing..."})
-
-                status = process_user_intent(typed_cmd.lower(), app, speak)
-                if status == "EXIT":
-                    app.session_active = False
-                    break
-
-                msg_queue.put({"type": "STATUS", "text": "Waiting..."})
+                cmd = text_command_queue.get(timeout=0.25)
+                msg_queue.put({"type": "LOG", "text": f"You: {cmd}"})
+                result = process_intent(cmd, speak)
+                if result == "EXIT":
+                    app.active = False
             except queue.Empty:
                 pass
     except Exception as e:
-        msg_queue.put({"type": "STATUS", "text": "Error."})
-        print(f"An error occurred: {e}")
+        msg_queue.put({"type": "LOG", "text": f"Error: {e}"})
     finally:
+        app.active = False
         msg_queue.put({"type": "HIDE"})
-        app.session_active = False
         pythoncom.CoUninitialize()
 
-def on_hotkey_pressed(app):
-    if not app.session_active:
-        app.session_active = True
-        threading.Thread(target=listen_and_process, args=(app,), daemon=True).start()
+
+def on_hotkey(app):
+    if not app.active:
+        app.active = True
+        threading.Thread(target=session_loop, args=(app,), daemon=True).start()
     else:
-        app.session_active = False
+        app.active = False
         msg_queue.put({"type": "HIDE"})
 
+
 def main():
-    print("Mira Assistant Started")
-    print("Press Ctrl+Alt+M to activate/deactivate")
+    import keyboard
+    print("Mira  —  Ctrl+Alt+M to toggle")
     app = MiraApp()
-    keyboard.add_hotkey('ctrl+alt+m', lambda: on_hotkey_pressed(app))
+    keyboard.add_hotkey("ctrl+alt+m", lambda: on_hotkey(app))
     try:
         app.mainloop()
     except KeyboardInterrupt:
-        print("Exiting...")
+        pass
+
 
 if __name__ == "__main__":
     main()
